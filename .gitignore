@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+
+# Testing
+.pytest_cache/
+
+# Build
+package/
+lambda_function.zip
+
+# VSCode settings (Optional)
+.vscode/

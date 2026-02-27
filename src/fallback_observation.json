@@ -1,0 +1,7 @@
+{
+  "station": "Unknown",
+  "temperature": null,
+  "humidity": null,
+  "timestamp": null,
+  "error": "Data fetch failed. Returning fallback data."
+}
