@@ -1,0 +1,28 @@
+openapi: 3.0.0
+info:
+  title: AI Data Analyst - Weather API
+  description: 気象データを取得し、構造化されたJSONを返すAPI
+  version: 1.0.0
+paths:
+  /weather:
+    get:
+      summary: 現在の気象情報を取得
+      parameters:
+        - name: station
+          in: query
+          required: false
+          schema:
+            type: string
+            default: Tokyo
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  station: { type: string }
+                  temperature: { type: number }
+                  humidity: { type: number }
+                  timestamp: { type: string, format: date-time }
