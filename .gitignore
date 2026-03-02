@@ -1,15 +1,59 @@
+# ============================
 # Python
+# ============================
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg-info/
 .venv/
+.env
+*.log
 
-# Testing
-.pytest_cache/
-
-# Build
+# ============================
+# AWS SAM / Lambda build artifacts
+# ============================
+.aws-sam/
+.build/
 package/
-lambda_function.zip
+dist/
+build/
+*.zip
 
-# VSCode settings (Optional)
+# ============================
+# Local test files
+# ============================
+event.json
+item.json
+
+# ============================
+# Test / Coverage
+# ============================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ============================
+# IDE / Editor
+# ============================
 .vscode/
+.idea/
+
+# ============================
+# OS / Misc
+# ============================
+.DS_Store
+Thumbs.db
+
+# ============================
+# Docker
+# ============================
+**/.dockerignore
+docker-compose.override.yml
+
+# ============================
+# Local DynamoDB data
+# ============================
+dynamodb/data/
+dynamodb/*.db

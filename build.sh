@@ -1,27 +1,37 @@
 #!/bin/bash
-
-# 設定
-PACKAGE_DIR="package"
-SRC_DIR="src"
-ZIP_NAME="lambda_function.zip"
+set -e
 
 echo "--- 1. Cleaning up old artifacts ---"
-rm -rf $PACKAGE_DIR
-rm -f $ZIP_NAME
+rm -rf package
+rm -f weather-observation-api.zip
+rm -f weather-fallback-api.zip
 
-echo "--- 2. Installing dependencies ---"
-# requirements.txt の内容を package フォルダにインストール
-pip install -r requirements.txt -t $PACKAGE_DIR
+echo "--- 2. Installing runtime dependencies ---"
+pip install -r requirements-runtime.txt -t package
 
-echo "--- 3. Copying source code ---"
-# src フォルダの中身を package フォルダにコピー
-cp -r $SRC_DIR/* $PACKAGE_DIR/
+echo "--- 2.5 Scrubbing unnecessary files ---"
+rm -rf package/bin
+find package -type d -name "__pycache__" -exec rm -rf {} +
+find package -type d -name "*.dist-info" -exec rm -rf {} +
+find package -type f -name "*.pyd" -exec rm -f {} +
+find package -type f -name "*.dll" -exec rm -f {} +
 
-echo "--- 4. Creating ZIP package ---"
-# package フォルダに移動して ZIP を作成
-cd $PACKAGE_DIR
-zip -r ../$ZIP_NAME .
+echo "--- 3. Copying Lambda source code ---"
+cp -r lambda/weather-observation-api/* package/
+find package -type d -name "__pycache__" -exec rm -rf {} +
+
+echo "--- 4. Creating ZIP package with 7-Zip ---"
+cd package
+7z a ../weather-observation-api.zip ./* > /dev/null
+cd ..
+
+rm -rf package
+mkdir package
+cp -r lambda/weather-fallback-api/* package/
+find package -type d -name "__pycache__" -exec rm -rf {} +
+
+cd package
+7z a ../weather-fallback-api.zip ./* > /dev/null
 cd ..
 
 echo "--- Done! ---"
-echo "Generated: $ZIP_NAME"

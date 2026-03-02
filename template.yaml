@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Weather Observation API (HTTP API v2)
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.11
+    MemorySize: 256
+
+Resources:
+  WeatherApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: dev
+
+  WeatherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      CodeUri: lambda/weather-observation-api/
+      Events:
+        ApiEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WeatherApi
+            Path: /weather
+            Method: POST
+      Environment:
+        Variables:
+          LOCAL_MODE: "true"
+          DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
