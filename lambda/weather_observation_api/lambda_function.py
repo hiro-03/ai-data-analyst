@@ -18,11 +18,7 @@ LOCAL_MODE = os.getenv("LOCAL_MODE", "").lower() == "true"
 # boto3 クライアントユーティリティ
 # -----------------------------
 def ddb_client():
-    if LOCAL_MODE:
-        endpoint = "http://localhost:8000"
-    else:
-        endpoint = os.getenv("DYNAMODB_ENDPOINT")  # docker-compose では http://dynamodb-local:8000
-
+    endpoint = os.getenv("DYNAMODB_ENDPOINT", "http://localhost:8000")
     return boto3.client(
         "dynamodb",
         region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),

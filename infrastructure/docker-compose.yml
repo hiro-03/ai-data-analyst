@@ -8,12 +8,12 @@ services:
       - ./dynamodb:/home/dynamodblocal/data
     command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data"
 
-  weather-observation-api:
+  weather_observation_api:
     build:
-      context: lambda/weather-observation-api
+      context: lambda/weather_observation_api
       dockerfile: Dockerfile
-    image: ai-data-analyst-weather-observation-api
-    container_name: weather-observation-api
+    image: ai-data-analyst-weather_observation_api
+    container_name: weather_observation_api
     ports:
       - "9000:8080"
     environment:
@@ -24,12 +24,12 @@ services:
     depends_on:
       - dynamodb-local
 
-  weather-fallback-api:
+  weather_fallback_api:
     build:
-      context: lambda/weather-fallback-api
+      context: lambda/weather_fallback_api
       dockerfile: Dockerfile
-    image: ai-data-analyst-weather-fallback-api
-    container_name: weather-fallback-api
+    image: ai-data-analyst-weather_fallback_api
+    container_name: weather_fallback_api
     ports:
       - "9001:8080"
     environment:
@@ -51,8 +51,8 @@ services:
       AWS_SECRET_ACCESS_KEY: "dummy"
       AWS_SFN_LOCAL: "true"
       SFN_MOCK_LAMBDA: "true"
-      LAMBDA_ENDPOINT: "http://weather-observation-api:8080"
+      LAMBDA_ENDPOINT: "http://weather_observation_api:8080"
     depends_on:
       - dynamodb-local
-      - weather-observation-api
-      - weather-fallback-api
+      - weather_observation_api
+      - weather_fallback_api

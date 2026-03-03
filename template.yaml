@@ -18,7 +18,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: lambda_function.lambda_handler
-      CodeUri: lambda/weather-observation-api/
+      CodeUri: lambda/weather_observation_api/
       Events:
         ApiEvent:
           Type: HttpApi
@@ -30,3 +30,4 @@ Resources:
         Variables:
           LOCAL_MODE: "true"
           DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
+          AWS_REGION: "ap-northeast-1"
