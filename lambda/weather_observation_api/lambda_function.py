@@ -13,33 +13,27 @@ logger.setLevel(logging.INFO)
 
 # 環境変数
 LOCAL_MODE = os.getenv("LOCAL_MODE", "").lower() == "true"
-DDB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT", "http://dynamodb-local:8000")
 
 # -----------------------------
 # boto3 クライアントユーティリティ
 # -----------------------------
-def ddb_local_client():
+def ddb_client():
+    if LOCAL_MODE:
+        endpoint = "http://localhost:8000"
+    else:
+        endpoint = os.getenv("DYNAMODB_ENDPOINT")  # docker-compose では http://dynamodb-local:8000
+
     return boto3.client(
         "dynamodb",
         region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
-        endpoint_url=DDB_ENDPOINT
+        endpoint_url=endpoint,
     )
-
-def ddb_prod_client():
-    return boto3.client(
-        "dynamodb",
-        region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
-        endpoint_url=DDB_ENDPOINT if LOCAL_MODE else None
-    )
-
-def get_client():
-    return ddb_local_client() if LOCAL_MODE else ddb_prod_client()
 
 # -----------------------------
 # DynamoDB 操作（例外をログに残す）
 # -----------------------------
 def ddb_scan(table_name):
-    client = get_client()
+    client = ddb_client()
     try:
         return client.scan(TableName=table_name)
     except ClientError:
@@ -47,7 +41,7 @@ def ddb_scan(table_name):
         raise
 
 def ddb_put_item(table_name, item):
-    client = get_client()
+    client = ddb_client()
     try:
         return client.put_item(TableName=table_name, Item=item)
     except ClientError:
@@ -60,7 +54,8 @@ def ensure_table_exists(table_name):
     """
     if not LOCAL_MODE:
         return
-    client = ddb_local_client()
+
+    client = ddb_client()
     try:
         client.describe_table(TableName=table_name)
         return
@@ -104,6 +99,38 @@ def haversine(lat1, lon1, lat2, lon2):
         + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
     )
     return 2 * R * math.asin(math.sqrt(a))
+
+# -----------------------------
+# Event パース（v1/v2 両対応）
+# -----------------------------
+def parse_event(event):
+    """
+    HTTP API v2 / REST API v1 / sam local invoke の全形式に対応した body パーサー
+    """
+    version = event.get("version")
+
+    # HTTP API v2
+    if version == "2.0":
+        raw = event.get("body", "")
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw).decode("utf-8")
+        try:
+            return json.loads(raw)
+        except Exception:
+            raise ValueError(f"invalid json body: {raw}")
+
+    # REST API v1 / sam local start-api（v1）
+    if "body" in event:
+        raw = event["body"]
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw).decode("utf-8")
+        try:
+            return json.loads(raw)
+        except Exception:
+            raise ValueError(f"invalid json body: {raw}")
+
+    # sam local invoke など、dict がそのまま来るケース
+    return event
 
 # -----------------------------
 # Stations 読み込み
@@ -160,38 +187,22 @@ def lambda_handler(event, context):
         except Exception:
             logger.exception("ensure_table_exists failed; continuing (local only)")
 
-        # HTTP API (Payload v2) の場合、body は JSON 文字列
-        if "body" in event:
-            raw = event["body"]
-            if event.get("isBase64Encoded"):
-                try:
-                    raw = base64.b64decode(raw).decode("utf-8")
-                except Exception:
-                    logger.exception("Failed to base64-decode body")
-                    return {
-                        "statusCode": 400,
-                        "headers": {"Content-Type": "application/json"},
-                        "body": json.dumps({"error": "invalid base64 body"})
-                    }
-            try:
-                body = json.loads(raw)
-            except Exception:
-                logger.exception("Failed to parse JSON body: %s", raw)
-                return {
-                    "statusCode": 400,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": json.dumps({"error": "invalid json body"})
-                }
-        else:
-            # sam local invoke などテスト用に直接 event を受け取る場合
-            body = event
+        # event から body を取り出す（v1/v2 両対応）
+        try:
+            body = parse_event(event)
+        except ValueError as e:
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": str(e)}),
+            }
 
         # 必須パラメータ検証
         if "lat" not in body or "lon" not in body:
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "lat and lon are required"})
+                "body": json.dumps({"error": "lat and lon are required"}),
             }
 
         try:
@@ -201,7 +212,7 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 400,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "lat and lon must be numbers"})
+                "body": json.dumps({"error": "lat and lon must be numbers"}),
             }
 
         stations = load_station_master()
@@ -210,7 +221,7 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 404,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "no stations available"})
+                "body": json.dumps({"error": "no stations available"}),
             }
 
         station_id = find_nearest_station(lat, lon, stations)
@@ -219,7 +230,7 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 422,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "cannot determine nearest station"})
+                "body": json.dumps({"error": "cannot determine nearest station"}),
             }
 
         weather = fetch_weather(station_id)
@@ -241,20 +252,20 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 500,
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"error": "failed to persist observation"})
+                "body": json.dumps({"error": "failed to persist observation"}),
             }
 
         response_body = {
             "station_id": station_id,
             "temperature": weather["temperature"],
             "humidity": weather["humidity"],
-            "timestamp": timestamp
+            "timestamp": timestamp,
         }
 
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(response_body)
+            "body": json.dumps(response_body),
         }
 
     except Exception:
@@ -262,5 +273,5 @@ def lambda_handler(event, context):
         return {
             "statusCode": 500,
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "internal server error"})
+            "body": json.dumps({"error": "internal server error"}),
         }
