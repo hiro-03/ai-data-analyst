@@ -19,10 +19,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          ls -al
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          pip install -r $GITHUB_WORKSPACE/requirements.txt
+          pip install -r $GITHUB_WORKSPACE/requirements-dev.txt
 
       - name: Run tests
         run: |
