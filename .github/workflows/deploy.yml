@@ -25,7 +25,9 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          pytest
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v2
