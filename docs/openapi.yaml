@@ -1,28 +1,48 @@
-openapi: 3.0.0
-info:
-  title: AI Data Analyst - Weather API
-  description: 気象データを取得し、構造化されたJSONを返すAPI
-  version: 1.0.0
 paths:
   /weather:
-    get:
-      summary: 現在の気象情報を取得
-      parameters:
-        - name: station
-          in: query
-          required: false
-          schema:
-            type: string
-            default: Tokyo
+    post:
+      summary: Weather inference API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lat
+                - lon
+              properties:
+                lat:
+                  type: number
+                  minimum: -90
+                  maximum: 90
+                lon:
+                  type: number
+                  minimum: -180
+                  maximum: 180
       responses:
-        '200':
-          description: 成功
+        "200":
+          description: Successful inference
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  station: { type: string }
-                  temperature: { type: number }
-                  humidity: { type: number }
-                  timestamp: { type: string, format: date-time }
+                  trace_id:
+                    type: string
+                  station_id:
+                    type: string
+                  lat:
+                    type: number
+                  lon:
+                    type: number
+                  temperature:
+                    type: number
+                  confidence:
+                    type: number
+                  timestamp:
+                    type: string
+        "400":
+          description: Invalid input
+        "500":
+          description: Internal inference error

@@ -1,33 +1,99 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
-Description: Weather Observation API (HTTP API v2)
-
-Globals:
-  Function:
-    Timeout: 30
-    Runtime: python3.11
-    MemorySize: 256
-
 Resources:
-  WeatherApi:
-    Type: AWS::Serverless::HttpApi
+  WeatherHttpApi:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      StageName: dev
+      Name: WeatherHttpApi
+      ProtocolType: HTTP
 
-  WeatherFunction:
-    Type: AWS::Serverless::Function
+  WeatherApiRole:
+    Type: AWS::IAM::Role
     Properties:
-      Handler: lambda_function.lambda_handler
-      CodeUri: lambda/weather_observation_api/
-      Events:
-        ApiEvent:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref WeatherApi
-            Path: /weather
-            Method: POST
-      Environment:
-        Variables:
-          LOCAL_MODE: "true"
-          DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
-          AWS_REGION: "ap-northeast-1"
+      RoleName: WeatherApiToStepFunctionsRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowStartExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: arn:aws:states:ap-northeast-1:476963918877:stateMachine:WeatherObservationStateMachine
+
+  WeatherApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WeatherHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: StepFunctions-StartExecution
+      CredentialsArn: !GetAtt WeatherApiRole.Arn
+      PayloadFormatVersion: "1.0"
+      RequestParameters:
+        StateMachineArn: arn:aws:states:ap-northeast-1:476963918877:stateMachine:WeatherObservationStateMachine
+        Input: "$request.body"
+
+  WeatherApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WeatherHttpApi
+      RouteKey: "POST /weather"
+      Target: !Join [ "/", ["integrations", !Ref WeatherApiIntegration] ]
+
+  WeatherApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WeatherHttpApi
+      StageName: prod
+      AutoDeploy: true
+
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WeatherStateMachineExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowLambdaInvoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - arn:aws:lambda:ap-northeast-1:476963918877:function:weather_observation_api
+                  - arn:aws:lambda:ap-northeast-1:476963918877:function:weather_fallback_api
+
+  WeatherObservationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: WeatherObservationStateMachine
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "StartAt": "Observation",
+            "States": {
+              "Observation": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:ap-northeast-1:476963918877:function:weather_observation_api",
+                "Next": "Fallback"
+              },
+              "Fallback": {
+                "Type": "Task",
+                "Resource": "arn:aws:lambda:ap-northeast-1:476963918877:function:weather_fallback_api",
+                "End": true
+              }
+            }
+          }

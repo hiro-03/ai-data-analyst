@@ -1,6 +1,9 @@
 import json
 from unittest.mock import patch
-from lambda.weather_observation_api.lambda_function import lambda_handler
+import sys
+sys.path.append("lambda/weather_observation_api")
+
+from lambda_function import lambda_handler, parse_event
 
 @patch("lambda.weather_observation_api.lambda_function.ddb_scan")
 @patch("lambda.weather_observation_api.lambda_function.ddb_put_item")

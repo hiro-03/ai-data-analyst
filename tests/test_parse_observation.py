@@ -2,11 +2,12 @@ import pytest
 import sys
 import os
 
+# プロジェクトルートを基準に lambda/weather_observation_api を import パスに追加
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-LAMBDA_DIR = os.path.join(ROOT, "lambda")
-sys.path.append(LAMBDA_DIR)
+OBS_API_DIR = os.path.join(ROOT, "lambda", "weather_observation_api")
+sys.path.append(OBS_API_DIR)
 
-from weather_observation_api.parse_observation import parse_observation
+from parse_observation import parse_observation
 
 
 def test_parse_observation_success():
