@@ -1,5 +1,5 @@
 import json
-from lambda.weather_observation_api.lambda_function import parse_event
+from lambdas.weather_observation_api.lambda_function import parse_event
 
 def test_parse_event_v2():
     event = {

@@ -1,33 +1,173 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Weather Observation API (HTTP API v2)
-
-Globals:
-  Function:
-    Timeout: 30
-    Runtime: python3.11
-    MemorySize: 256
+Description: Weather API with Step Functions Sync Execution
 
 Resources:
-  WeatherApi:
-    Type: AWS::Serverless::HttpApi
+  ########################################
+  # API Gateway
+  ########################################
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      StageName: dev
+      Name: WeatherRestApi
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
 
-  WeatherFunction:
-    Type: AWS::Serverless::Function
+  RestApiResourceWeather:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      Handler: lambda_function.lambda_handler
-      CodeUri: lambda/weather_observation_api/
-      Events:
-        ApiEvent:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref WeatherApi
-            Path: /weather
-            Method: POST
-      Environment:
-        Variables:
-          LOCAL_MODE: "true"
-          DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
-          AWS_REGION: "ap-northeast-1"
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: weather
+
+  ########################################
+  # IAM Role for API Gateway → Step Functions
+  ########################################
+  ApiGatewayStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ApiGatewayStepFunctionsRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApiGatewayStepFunctionsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                  - states:StartSyncExecution
+                Resource: "*"
+
+  ########################################
+  # Step Functions (EXPRESS)
+  ########################################
+  WeatherObservationStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: WeatherObservationStateMachineRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WeatherObservationStateMachinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: "*"
+
+  WeatherObservationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: WeatherObservationStateMachine
+      StateMachineType: EXPRESS
+      RoleArn: !GetAtt WeatherObservationStateMachineRole.Arn
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "StartAt": "InvokeWeatherLambda",
+            "States": {
+              "InvokeWeatherLambda": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": {
+                  "FunctionName": "weather_observation_api",
+                  "Payload.$": "$"
+                },
+                "End": true
+              }
+            }
+          }
+
+  ########################################
+  # API Gateway Method → StartSyncExecution
+  # ＋ レスポンス整形（Mapping Template）
+  ########################################
+  RestApiMethodWeatherPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref RestApiResourceWeather
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub: arn:aws:apigateway:${AWS::Region}:states:action/StartSyncExecution
+        Credentials: !GetAtt ApiGatewayStepFunctionsRole.Arn
+        RequestTemplates:
+          application/json:
+            Fn::Sub:
+              - |
+                {
+                  "input": "$util.escapeJavaScript($input.body)",
+                  "stateMachineArn": "${StateMachineArn}"
+                }
+              - {
+                  StateMachineArn: !GetAtt WeatherObservationStateMachine.Arn
+                }
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: |
+                #set($raw = $input.json('$.output.Payload.body'))
+                $raw
+      MethodResponses:
+        - StatusCode: 200
+
+  ########################################
+  # DynamoDB（WeatherObservations）
+  ########################################
+  WeatherObservationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: WeatherObservations
+      AttributeDefinitions:
+        - AttributeName: station_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: station_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  ########################################
+  # Deployment & Stage（Logical ID を変更して強制更新）
+  ########################################
+  RestApiDeployment20260312:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RestApiMethodWeatherPost
+    Properties:
+      RestApiId: !Ref RestApi
+      Description: "Deployment for prod stage"
+
+  RestApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: prod
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref RestApiDeployment20260312
+      MethodSettings:
+        - LoggingLevel: INFO
+          DataTraceEnabled: true
+          ResourcePath: "/*"
+          HttpMethod: "*"
