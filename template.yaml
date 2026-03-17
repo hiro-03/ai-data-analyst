@@ -118,17 +118,44 @@ Resources:
                   "input": "$util.escapeJavaScript($input.body)",
                   "stateMachineArn": "${StateMachineArn}"
                 }
-              - {
-                  StateMachineArn: !GetAtt WeatherObservationStateMachine.Arn
-                }
+              - { StateMachineArn: !GetAtt WeatherObservationStateMachine.Arn }
+
+        ########################################
+        # ★ 修正済み ResponseTemplates（重要）
+        ########################################
         IntegrationResponses:
           - StatusCode: 200
             ResponseTemplates:
               application/json: |
-                #set($raw = $input.json('$.output.Payload.body'))
-                $raw
+                #set($inputRoot = $input.path('$'))
+                {
+                  "body": $inputRoot
+                }
+
       MethodResponses:
         - StatusCode: 200
+
+  ########################################
+  # Lambda（WeatherObservationLambda）
+  ########################################
+  WeatherObservationLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: weather_observation_api
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      CodeUri: lambdas/weather_observation_api/
+      Timeout: 30
+      MemorySize: 512
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: Stations
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource: arn:aws:dynamodb:ap-northeast-1:476963918877:table/Stations
 
   ########################################
   # DynamoDB（WeatherObservations）
