@@ -4,22 +4,17 @@ Description: Weather API with Step Functions Sync Execution
 
 Resources:
   ########################################
-  # API Gateway
+  # API Gateway（OpenAPI を正として読み込む）
   ########################################
-  RestApi:
+  WeatherApi20260323:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: WeatherRestApi
-      EndpointConfiguration:
-        Types:
-          - REGIONAL
-
-  RestApiResourceWeather:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref RestApi
-      ParentId: !GetAtt RestApi.RootResourceId
-      PathPart: weather
+      Body:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: ./openapi.yaml
 
   ########################################
   # IAM Role for API Gateway → Step Functions
@@ -94,48 +89,6 @@ Resources:
           }
 
   ########################################
-  # API Gateway Method → StartSyncExecution
-  # ＋ レスポンス整形（Mapping Template）
-  ########################################
-  RestApiMethodWeatherPost:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref RestApi
-      ResourceId: !Ref RestApiResourceWeather
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS
-        IntegrationHttpMethod: POST
-        Uri:
-          Fn::Sub: arn:aws:apigateway:${AWS::Region}:states:action/StartSyncExecution
-        Credentials: !GetAtt ApiGatewayStepFunctionsRole.Arn
-        RequestTemplates:
-          application/json:
-            Fn::Sub:
-              - |
-                {
-                  "input": "$util.escapeJavaScript($input.body)",
-                  "stateMachineArn": "${StateMachineArn}"
-                }
-              - { StateMachineArn: !GetAtt WeatherObservationStateMachine.Arn }
-
-        ########################################
-        # ★ 修正済み ResponseTemplates（重要）
-        ########################################
-        IntegrationResponses:
-          - StatusCode: 200
-            ResponseTemplates:
-              application/json: |
-                #set($inputRoot = $input.path('$'))
-                {
-                  "body": $inputRoot
-                }
-
-      MethodResponses:
-        - StatusCode: 200
-
-  ########################################
   # Lambda（WeatherObservationLambda）
   ########################################
   WeatherObservationLambda:
@@ -177,22 +130,22 @@ Resources:
       BillingMode: PAY_PER_REQUEST
 
   ########################################
-  # Deployment & Stage（Logical ID を変更して強制更新）
+  # Deployment & Stage（OpenAPI 方式に合わせて修正）
   ########################################
-  RestApiDeployment20260312:
+  WeatherApiDeployment20260324:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - RestApiMethodWeatherPost
+      - WeatherApi20260323
     Properties:
-      RestApiId: !Ref RestApi
+      RestApiId: !Ref WeatherApi20260323
       Description: "Deployment for prod stage"
 
-  RestApiStage:
+  WeatherApiStage:
     Type: AWS::ApiGateway::Stage
     Properties:
       StageName: prod
-      RestApiId: !Ref RestApi
-      DeploymentId: !Ref RestApiDeployment20260312
+      RestApiId: !Ref WeatherApi20260323
+      DeploymentId: !Ref WeatherApiDeployment20260324
       MethodSettings:
         - LoggingLevel: INFO
           DataTraceEnabled: true

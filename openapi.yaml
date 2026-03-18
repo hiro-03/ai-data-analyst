@@ -1,0 +1,53 @@
+swagger: "2.0"
+info:
+  title: Weather Observation API
+  version: "1.0"
+
+paths:
+  /weather:
+    post:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            properties:
+              lat:
+                type: number
+              lon:
+                type: number
+            required:
+              - lat
+              - lon
+
+      responses:
+        200:
+          description: Successful execution
+          schema:
+            type: object
+
+      x-amazon-apigateway-integration:
+        type: aws
+        httpMethod: POST
+        uri: arn:aws:apigateway:ap-northeast-1:states:action/StartSyncExecution
+        credentials: arn:aws:iam::476963918877:role/ApiGatewayStepFunctionsRole
+        passthroughBehavior: when_no_templates
+        requestTemplates:
+          application/json: |
+            {
+              "stateMachineArn": "arn:aws:states:ap-northeast-1:476963918877:stateMachine:WeatherObservationStateMachine",
+              "input": "$util.escapeJavaScript($input.body)"
+            }
+        responses:
+          "200":
+            statusCode: "200"
+            responseTemplates:
+              application/json: |
+                #set($output = $util.parseJson($input.path('$.output')))
+                $output.Payload.body

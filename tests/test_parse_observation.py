@@ -6,7 +6,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LAMBDA_DIR = os.path.join(ROOT, "lambda")
 sys.path.append(LAMBDA_DIR)
 
-from weather_observation_api.parse_observation import parse_observation
+from lambdas.weather_observation_api.parse_observation import parse_observation
 
 
 def test_parse_observation_success():
