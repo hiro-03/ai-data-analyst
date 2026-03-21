@@ -27,21 +27,30 @@ paths:
               - lon
 
       responses:
-        200:
+        "200":
           description: Successful execution
           schema:
             type: object
+            properties:
+              station_id:
+                type: string
+              temperature:
+                type: number
+              humidity:
+                type: number
+              timestamp:
+                type: string
 
       x-amazon-apigateway-integration:
         type: aws
         httpMethod: POST
-        uri: arn:aws:apigateway:ap-northeast-1:states:action/StartSyncExecution
-        credentials: arn:aws:iam::476963918877:role/ApiGatewayStepFunctionsRole
+        uri: arn:aws:apigateway:${AWS::Region}:states:action/StartSyncExecution
+        credentials: arn:aws:iam::${AWS::AccountId}:role/ApiGatewayStepFunctionsRole
         passthroughBehavior: when_no_templates
         requestTemplates:
           application/json: |
             {
-              "stateMachineArn": "arn:aws:states:ap-northeast-1:476963918877:stateMachine:WeatherObservationStateMachine",
+              "stateMachineArn": "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-WeatherObservationStateMachine",
               "input": "$util.escapeJavaScript($input.body)"
             }
         responses:
@@ -49,5 +58,11 @@ paths:
             statusCode: "200"
             responseTemplates:
               application/json: |
-                #set($output = $util.parseJson($input.path('$.output')))
-                $output.Payload.body
+                #set($rawOutput = $input.path('$.output'))
+                #set($parsedOutput = $util.parseJson($rawOutput))
+                #set($payloadBody = $parsedOutput.Payload.body)
+                #if($payloadBody && $payloadBody.startsWith("{"))
+                  $util.parseJson($payloadBody)
+                #else
+                  $payloadBody
+                #end
