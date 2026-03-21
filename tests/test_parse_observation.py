@@ -1,6 +1,7 @@
 import pytest # type: ignore
 import sys
 import os
+import json
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LAMBDA_DIR = os.path.join(ROOT, "lambda")
@@ -41,3 +42,8 @@ def test_parse_observation_invalid_data():
     assert result["humidity"] is None
     assert result["timestamp"] == "2024-05-20T10:00:00Z"
     assert result["error"] is None
+
+def test_parse_event_v2_preprocess(monkeypatch):
+    from lambda_function import preprocess
+    event = {"version": "2.0", "body": json.dumps({"lat": 35.7, "lon": 139.7})}
+    assert preprocess(event) == {"lat": 35.7, "lon": 139.7}
