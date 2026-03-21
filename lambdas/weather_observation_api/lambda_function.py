@@ -8,6 +8,9 @@ import logging
 from botocore.exceptions import ClientError
 import boto3
 
+# station_master を利用する（テーブル名は環境変数で渡す）
+from station_master import load_station_master, find_nearest_station
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -140,48 +143,6 @@ def parse_event(event):
     return event
 
 # -----------------------------
-# Stations 読み込み
-# -----------------------------
-def load_station_master():
-    logger.info("LOG: load_station_master start")
-    try:
-        logger.info("LOG: before ddb_scan Stations")
-        resp = ddb_scan("Stations")
-    except Exception:
-        logger.exception("Failed to scan Stations table")
-        raise
-
-    logger.info("LOG: Stations scan resp: %s", resp)
-    items = resp.get("Items", [])
-    stations = []
-    for i in items:
-        try:
-            stations.append({
-                "station_id": i["station_id"]["S"],
-                "latitude": float(i["latitude"]["N"]),
-                "longitude": float(i["longitude"]["N"]),
-            })
-        except Exception:
-            logger.exception("Malformed station item: %s", i)
-            raise
-    return stations
-
-# -----------------------------
-# 最寄り station 判定
-# -----------------------------
-def find_nearest_station(lat, lon, stations):
-    logger.info("LOG: find_nearest_station start")
-    nearest = None
-    min_dist = float("inf")
-    for s in stations:
-        dist = haversine(lat, lon, s["latitude"], s["longitude"])
-        if dist < min_dist:
-            min_dist = dist
-            nearest = s["station_id"]
-    logger.info("LOG: nearest station = %s", nearest)
-    return nearest
-
-# -----------------------------
 # 気象データ取得（ダミー）
 # -----------------------------
 def fetch_weather(station_id):
@@ -196,8 +157,11 @@ def lambda_handler(event, context):
     logger.info("LOG: event received: %s", event)
 
     try:
+        stations_table = os.environ.get("STATIONS_TABLE", "Stations")
+        observations_table = os.environ.get("WEATHER_OBSERVATIONS_TABLE", "WeatherObservations")
+
         try:
-            ensure_table_exists("WeatherObservations")
+            ensure_table_exists(observations_table)
         except Exception:
             logger.exception("ensure_table_exists failed; continuing (local only)")
 
@@ -213,28 +177,49 @@ def lambda_handler(event, context):
             }
 
         if "lat" not in body or "lon" not in body:
-            raise ValueError("lat and lon are required")
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "lat and lon are required"}),
+            }
 
         if body["lat"] is None or body["lon"] is None:
-            raise ValueError("lat/lon is None")
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "lat/lon is None"}),
+            }
 
         try:
             lat = float(body["lat"])
             lon = float(body["lon"])
             logger.info("LOG: lat/lon parsed: %s, %s", lat, lon)
         except Exception:
-            raise ValueError("lat and lon must be numbers")
+            return {
+                "statusCode": 400,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "lat and lon must be numbers"}),
+            }
 
         logger.info("LOG: before load_station_master")
-        stations = load_station_master()
+        # station_master.load_station_master accepts optional table_name
+        stations = load_station_master(table_name=stations_table)
         logger.info("LOG: stations loaded: %s", stations)
 
         if not stations:
-            raise ValueError("no stations available")
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "no stations available"}),
+            }
 
         station_id = find_nearest_station(lat, lon, stations)
         if station_id is None:
-            raise ValueError("cannot determine nearest station")
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "cannot determine nearest station"}),
+            }
 
         weather = fetch_weather(station_id)
 
@@ -250,10 +235,14 @@ def lambda_handler(event, context):
 
         logger.info("LOG: before ddb_put_item: %s", item)
         try:
-            ddb_put_item("WeatherObservations", item)
+            ddb_put_item(observations_table, item)
         except Exception:
             logger.exception("Failed to put item into WeatherObservations")
-            raise
+            return {
+                "statusCode": 500,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"error": "failed to persist observation"}),
+            }
 
         response_body = {
             "station_id": station_id,
@@ -271,4 +260,8 @@ def lambda_handler(event, context):
 
     except Exception:
         logger.exception("Unhandled exception in lambda_handler")
-        raise
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "internal server error"}),
+        }

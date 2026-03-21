@@ -1,58 +1,38 @@
+version: "3.9"
+
 services:
+  weather_observation_api:
+    build:
+      context: ../lambdas/weather_observation_api
+      dockerfile: Dockerfile
+    container_name: weather_observation_api
+    ports:
+      - "9001:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: ap-northeast-1
+    volumes:
+      - ../lambdas/weather_observation_api:/var/task
+
+  weather_fallback_api:
+    build:
+      context: ../lambdas/weather_fallback_api
+      dockerfile: Dockerfile
+    container_name: weather_fallback_api
+    ports:
+      - "9002:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: ap-northeast-1
+    volumes:
+      - ../lambdas/weather_fallback_api:/var/task
+
   dynamodb-local:
     image: amazon/dynamodb-local
     container_name: dynamodb-local
     ports:
       - "8000:8000"
     volumes:
-      - ./dynamodb:/home/dynamodblocal/data
-    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data"
-
-  weather_observation_api:
-    build:
-      context: lambda/weather_observation_api
-      dockerfile: Dockerfile
-    image: ai-data-analyst-weather_observation_api
-    container_name: weather_observation_api
-    ports:
-      - "9000:8080"
-    environment:
-      AWS_ACCESS_KEY_ID: "dummy"
-      AWS_SECRET_ACCESS_KEY: "dummy"
-      AWS_DEFAULT_REGION: "ap-northeast-1"
-      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
-    depends_on:
-      - dynamodb-local
-
-  weather_fallback_api:
-    build:
-      context: lambda/weather_fallback_api
-      dockerfile: Dockerfile
-    image: ai-data-analyst-weather_fallback_api
-    container_name: weather_fallback_api
-    ports:
-      - "9001:8080"
-    environment:
-      AWS_ACCESS_KEY_ID: "dummy"
-      AWS_SECRET_ACCESS_KEY: "dummy"
-      AWS_DEFAULT_REGION: "ap-northeast-1"
-      DYNAMODB_ENDPOINT: "http://dynamodb-local:8000"
-    depends_on:
-      - dynamodb-local
-
-  stepfunctions-local:
-    image: amazon/aws-stepfunctions-local
-    container_name: stepfunctions-local
-    ports:
-      - "8083:8083"
-    environment:
-      AWS_DEFAULT_REGION: "ap-northeast-1"
-      AWS_ACCESS_KEY_ID: "dummy"
-      AWS_SECRET_ACCESS_KEY: "dummy"
-      AWS_SFN_LOCAL: "true"
-      SFN_MOCK_LAMBDA: "true"
-      LAMBDA_ENDPOINT: "http://weather_observation_api:8080"
-    depends_on:
-      - dynamodb-local
-      - weather_observation_api
-      - weather_fallback_api
+      - ../dynamodb:/home/dynamodblocal/data

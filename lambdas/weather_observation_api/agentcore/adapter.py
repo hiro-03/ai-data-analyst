@@ -1,5 +1,5 @@
-from joblib import load
 import os
+from joblib import load
 
 class DummyModel:
     def predict(self, X):
