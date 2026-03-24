@@ -1,3 +1,4 @@
+# lambda_function.py (修正版)
 import json
 import os
 import math
@@ -20,18 +21,32 @@ LOCAL_MODE = os.getenv("LOCAL_MODE", "").lower() == "true"
 # boto3 クライアント
 # -----------------------------
 def ddb_client():
+    """
+    DynamoDB client を返す。
+    - DYNAMODB_ENDPOINT があればそれを使う
+    - なければ sam local 実行時 (AWS_SAM_LOCAL=1) に host.docker.internal をフォールバックで使う
+    - region は AWS_REGION または ap-northeast-1 を使う
+    """
     endpoint = os.getenv("DYNAMODB_ENDPOINT")
-    logger.info("LOG: ddb_client init (endpoint=%s)", endpoint)
+    region = os.environ.get("AWS_REGION", "ap-northeast-1")
+
+    # sam local invoke のときはコンテナ内に AWS_SAM_LOCAL=1 がセットされる
+    if not endpoint and os.getenv("AWS_SAM_LOCAL"):
+        endpoint = "http://host.docker.internal:8000"
+
+    # デバッグ用に環境変数の一部をログ出力（本番では必要に応じて削除）
+    logger.info("LOG: ddb_client init (endpoint=%s, region=%s, AWS_SAM_LOCAL=%s)", endpoint, region, os.getenv("AWS_SAM_LOCAL"))
+
     if endpoint:
         return boto3.client(
             "dynamodb",
-            region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
+            region_name=region,
             endpoint_url=endpoint,
         )
     else:
         return boto3.client(
             "dynamodb",
-            region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
+            region_name=region,
         )
 
 # -----------------------------
@@ -157,6 +172,7 @@ def lambda_handler(event, context):
     logger.info("LOG: event received: %s", event)
 
     try:
+        # テンプレートに合わせて WEATHER_OBSERVATIONS_TABLE を参照
         stations_table = os.environ.get("STATIONS_TABLE", "Stations")
         observations_table = os.environ.get("WEATHER_OBSERVATIONS_TABLE", "WeatherObservations")
 
