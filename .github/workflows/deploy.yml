@@ -45,6 +45,6 @@ jobs:
         run: |
           sam deploy \
             --stack-name ai-data-analyst \
-            --capabilities CAPABILITY_IAM \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
