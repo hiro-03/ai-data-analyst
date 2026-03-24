@@ -244,12 +244,12 @@ Resources:
           DataTraceEnabled: true
           ResourcePath: "/*"
           HttpMethod: "*"
-  
-  Outputs:
-    WeatherApiUrl:
-      Description: "Invoke URL for Weather API"
-      Value: !Sub "https://${WeatherApi20260323}.execute-api.${AWS::Region}.amazonaws.com/prod/weather"
 
-    WeatherObservationLambdaName:
-      Description: "Lambda function name"
-      Value: !Ref WeatherObservationLambda
+Outputs:
+  WeatherApiUrl:
+    Description: "Invoke URL for Weather API"
+    Value: !Sub "https://${WeatherApi20260323}.execute-api.${AWS::Region}.amazonaws.com/prod/weather"
+
+  WeatherObservationLambdaName:
+    Description: "Lambda function name"
+    Value: !Ref WeatherObservationLambda
