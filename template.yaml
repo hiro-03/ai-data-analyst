@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Weather API with Step Functions Sync Execution v2
+Description: Weather API + Fishing Advice API (Step Functions Sync Execution v2)
 
 Parameters:
   DeployTimestamp:
@@ -9,156 +9,85 @@ Parameters:
 
 Resources:
   ########################################
-  # API Gateway OpenAPI
+  # API Gateway OpenAPI (Body as mapping)
   ########################################
-  WeatherApi20260323:
+  WeatherApi20260326:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: WeatherRestApi
       Body:
-        Fn::Sub: |
-          swagger: "2.0"
-          info:
-            title: Weather Observation API
-            version: "1.0"
-
-          paths:
-            /weather:
-              post:
-                consumes:
-                  - application/json
-                produces:
-                  - application/json
-
-                parameters:
-                  - in: body
-                    name: body
-                    required: true
-                    schema:
-                      type: object
-                      properties:
-                        lat:
-                          type: number
-                        lon:
-                          type: number
-                      required:
-                        - lat
-                        - lon
-
-                responses:
-                  "200":
-                    description: Successful execution
-                    schema:
-                      type: object
-                      properties:
-                        station_id:
-                          type: string
-                        temperature:
-                          type: number
-                        humidity:
-                          type: number
-                        timestamp:
-                          type: string
-
-                x-amazon-apigateway-integration:
-                  type: aws
-                  httpMethod: POST
-                  uri: arn:aws:apigateway:${AWS::Region}:states:action/StartSyncExecution
-                  credentials: arn:aws:iam::${AWS::AccountId}:role/ApiGatewayStepFunctionsRole
-                  passthroughBehavior: when_no_templates
-                  requestTemplates:
-                    application/json: |
-                      {
-                        "stateMachineArn": "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-WeatherObservationStateMachine",
-                        "input": "$util.escapeJavaScript($input.body)"
-                      }
-                  responses:
-                    "200":
-                      statusCode: "200"
-                      responseTemplates:
-                        application/json: |
-                          #set($rawOutput = $input.path('$.output'))
-                          #set($parsedOutput = $util.parseJson($rawOutput))
-                          #set($payloadBody = $parsedOutput.Payload.body)
-                          #if($payloadBody && $payloadBody.startsWith("{"))
-                            $util.parseJson($payloadBody)
-                          #else
-                            $payloadBody
-                          #end
+        swagger: "2.0"
+        info:
+          title: Weather Observation API
+          version: "1.1"
+        paths:
+          /fishing:
+            post:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - in: body
+                  name: body
+                  required: true
+                  schema:
+                    type: object
+                    properties:
+                      lat:
+                        type: number
+                      lon:
+                        type: number
+                      target_species:
+                        type: string
+                      spot_type:
+                        type: string
+                      start_at:
+                        type: string
+                    required:
+                      - lat
+                      - lon
+              responses:
+                "200":
+                  description: Successful execution
+                  schema:
+                    type: object
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FishingApiProxyLambda.Arn}/invocations"
 
   ########################################
-  # IAM Role for API Gateway → Step Functions
+  # Lambda (API Proxy)
   ########################################
-  ApiGatewayStepFunctionsRole:
-    Type: AWS::IAM::Role
+  FishingApiProxyLambda:
+    Type: AWS::Serverless::Function
     Properties:
-      RoleName: ApiGatewayStepFunctionsRole
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
+      FunctionName: !Sub "${AWS::StackName}-fishing_api_proxy"
+      Runtime: python3.11
+      CodeUri: lambdas/api_proxy/fishing_proxy/
+      Handler: lambda_function.lambda_handler
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          FISHING_STATE_MACHINE_ARN: !Ref FishingAdviceStateMachine
       Policies:
-        - PolicyName: ApiGatewayStepFunctionsPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - states:StartExecution
-                  - states:StartSyncExecution
-                Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-WeatherObservationStateMachine"
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+              Resource: !Ref FishingAdviceStateMachine
 
-  ########################################
-  # Step Functions EXPRESS
-  ########################################
-  WeatherObservationStateMachineRole:
-    Type: AWS::IAM::Role
+  FishingApiProxyPermission:
+    Type: AWS::Lambda::Permission
     Properties:
-      RoleName: !Sub "${AWS::StackName}-WeatherObservationStateMachineRole"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: states.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: WeatherObservationStateMachinePolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                Resource: !GetAtt WeatherObservationLambda.Arn
-
-  WeatherObservationStateMachine:
-    Type: AWS::StepFunctions::StateMachine
-    Properties:
-      StateMachineName: !Sub "${AWS::StackName}-WeatherObservationStateMachine"
-      StateMachineType: EXPRESS
-      RoleArn: !GetAtt WeatherObservationStateMachineRole.Arn
-      DefinitionString:
-        Fn::Sub:
-          - |
-            {
-              "StartAt": "InvokeWeatherLambda",
-              "States": {
-                "InvokeWeatherLambda": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                    "FunctionName": "${LambdaArn}",
-                    "Payload.$": "$"
-                  },
-                  "End": true
-                }
-              }
-            }
-          - { LambdaArn: !GetAtt WeatherObservationLambda.Arn }
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt FishingApiProxyLambda.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeatherApi20260326}/*/POST/fishing"
 
   ########################################
   # DynamoDB
@@ -175,52 +104,206 @@ Resources:
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
 
-  WeatherObservationsTable:
+  ExternalApiCacheTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "${AWS::StackName}-WeatherObservations"
+      TableName: !Sub "${AWS::StackName}-ExternalApiCache"
       AttributeDefinitions:
-        - AttributeName: station_id
-          AttributeType: S
-        - AttributeName: timestamp
+        - AttributeName: cache_key
           AttributeType: S
       KeySchema:
-        - AttributeName: station_id
+        - AttributeName: cache_key
           KeyType: HASH
-        - AttributeName: timestamp
-          KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl_epoch
+        Enabled: true
 
   ########################################
-  # Lambda
+  # Lambda (Fishing - minimal handlers)
   ########################################
-  WeatherObservationLambda:
+  ResolveNearestStationLambda:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "${AWS::StackName}-weather_observation_api"
-      Handler: lambda_function.lambda_handler
+      FunctionName: !Sub "${AWS::StackName}-resolve_nearest_station"
       Runtime: python3.11
-      CodeUri: lambdas/weather_observation_api/
-      Timeout: 30
-      MemorySize: 512
+      CodeUri: lambdas/fishing/resolve_station/
+      Handler: lambda_function.lambda_handler
+      Timeout: 10
+      MemorySize: 256
       Environment:
         Variables:
           STATIONS_TABLE: !Ref StationsTable
-          WEATHER_OBSERVATIONS_TABLE: !Ref WeatherObservationsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref StationsTable
+
+  GetTideLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-get_tide"
+      Runtime: python3.11
+      CodeUri: lambdas/fishing/get_tide/
+      Handler: lambda_function.lambda_handler
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          CACHE_TABLE: !Ref ExternalApiCacheTable
+          TIDE_PROVIDER: "mock"
       Policies:
         - AWSLambdaBasicExecutionRole
         - DynamoDBCrudPolicy:
-            TableName: !Ref StationsTable
+            TableName: !Ref ExternalApiCacheTable
+
+  GetMarineDataLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-get_marine_data"
+      Runtime: python3.11
+      CodeUri: lambdas/fishing/get_marine/
+      Handler: lambda_function.lambda_handler
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          CACHE_TABLE: !Ref ExternalApiCacheTable
+          MARINE_PROVIDER: "mock"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExternalApiCacheTable
+
+  FishingInferenceLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-fishing_inference"
+      Runtime: python3.11
+      CodeUri: lambdas/fishing/infer/
+      Handler: lambda_function.lambda_handler
+      Timeout: 30
+      MemorySize: 1024
+      Environment:
+        Variables:
+          INFERENCE_PROVIDER: "mock"
+          BEDROCK_AGENT_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
+          BEDROCK_AGENT_ALIAS_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/alias-id}}"
+      Policies:
+        - AWSLambdaBasicExecutionRole
         - Statement:
             - Effect: Allow
               Action:
-                - dynamodb:Scan
-                - dynamodb:GetItem
-                - dynamodb:Query
-                - dynamodb:PutItem
-              Resource:
-                - !GetAtt StationsTable.Arn
-                - !GetAtt WeatherObservationsTable.Arn
+                - bedrock-agent-runtime:InvokeAgent
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+              Resource: "*"
+
+  ########################################
+  # Step Functions EXPRESS (Fishing)
+  ########################################
+  FishingAdviceStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-FishingAdviceStateMachineRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FishingAdviceStateMachinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ResolveNearestStationLambda.Arn
+                  - !GetAtt GetTideLambda.Arn
+                  - !GetAtt GetMarineDataLambda.Arn
+                  - !GetAtt FishingInferenceLambda.Arn
+
+  FishingAdviceStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-FishingAdviceStateMachine"
+      StateMachineType: EXPRESS
+      RoleArn: !GetAtt FishingAdviceStateMachineRole.Arn
+      DefinitionString:
+        Fn::Sub:
+          - |
+            {
+              "StartAt": "ResolveStation",
+              "States": {
+                "ResolveStation": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "FunctionName": "${ResolveStationArn}",
+                    "Payload.$": "$"
+                  },
+                  "ResultPath": "$.station",
+                  "Next": "FetchExtras"
+                },
+                "FetchExtras": {
+                  "Type": "Parallel",
+                  "Branches": [
+                    {
+                      "StartAt": "GetTide",
+                      "States": {
+                        "GetTide": {
+                          "Type": "Task",
+                          "Resource": "arn:aws:states:::lambda:invoke",
+                          "Parameters": {
+                            "FunctionName": "${GetTideArn}",
+                            "Payload.$": "$"
+                          },
+                          "End": true
+                        }
+                      }
+                    },
+                    {
+                      "StartAt": "GetMarineData",
+                      "States": {
+                        "GetMarineData": {
+                          "Type": "Task",
+                          "Resource": "arn:aws:states:::lambda:invoke",
+                          "Parameters": {
+                            "FunctionName": "${GetMarineArn}",
+                            "Payload.$": "$"
+                          },
+                          "End": true
+                        }
+                      }
+                    }
+                  ],
+                  "ResultPath": "$.extras",
+                  "Next": "InferFishingAdvice"
+                },
+                "InferFishingAdvice": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "FunctionName": "${InferArn}",
+                    "Payload.$": "$"
+                  },
+                  "End": true
+                }
+              }
+            }
+          - {
+              ResolveStationArn: !GetAtt ResolveNearestStationLambda.Arn,
+              GetTideArn: !GetAtt GetTideLambda.Arn,
+              GetMarineArn: !GetAtt GetMarineDataLambda.Arn,
+              InferArn: !GetAtt FishingInferenceLambda.Arn
+            }
 
   ########################################
   # Deployment & Stage
@@ -228,28 +311,96 @@ Resources:
   WeatherApiDeployment20260324:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - WeatherApi20260323
+      - WeatherApi20260326
     Properties:
-      RestApiId: !Ref WeatherApi20260323
+      RestApiId: !Ref WeatherApi20260326
       Description: !Sub "Deployment for prod stage - ${DeployTimestamp}"
 
   WeatherApiStage:
     Type: AWS::ApiGateway::Stage
     Properties:
       StageName: prod
-      RestApiId: !Ref WeatherApi20260323
+      RestApiId: !Ref WeatherApi20260326
       DeploymentId: !Ref WeatherApiDeployment20260324
       MethodSettings:
-        - LoggingLevel: INFO
+        - MetricsEnabled: true
+          LoggingLevel: INFO
           DataTraceEnabled: true
           ResourcePath: "/*"
           HttpMethod: "*"
 
-Outputs:
-  WeatherApiUrl:
-    Description: "Invoke URL for Weather API"
-    Value: !Sub "https://${WeatherApi20260323}.execute-api.${AWS::Region}.amazonaws.com/prod/weather"
+  ########################################
+  # CloudWatch Alarms (MLOps minimum)
+  ########################################
+  FishingApiProxyErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Fishing API proxy Lambda errors >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FishingApiProxyLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
 
-  WeatherObservationLambdaName:
-    Description: "Lambda function name"
-    Value: !Ref WeatherObservationLambda
+  FishingApiProxyThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Fishing API proxy Lambda throttles >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Throttles"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FishingApiProxyLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  FishingApiProxyDurationP95Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Fishing API proxy Lambda p95 duration > 25s"
+      Namespace: "AWS/Lambda"
+      MetricName: "Duration"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FishingApiProxyLambda
+      ExtendedStatistic: p95
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 25000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  FishingInferenceErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Fishing inference Lambda errors >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FishingInferenceLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  FishingApiUrl:
+    Description: "Invoke URL for Fishing API"
+    Value:
+      Fn::Sub:
+        - "https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/fishing"
+        - { RestApiId: !Ref WeatherApi20260326 }

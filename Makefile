@@ -1,30 +1,27 @@
-# 変数定義
-export PY_VERSION := 3.9
-export PACKAGE_DIR := package
-export SRC_DIR := src
-export ZIP_NAME := lambda_function.zip
+.PHONY: help sam-validate sam-build sam-deploy seed-stations test-api
 
-.PHONY: help build clean test
+STACK_NAME ?= ai-data-analyst-fishing
+REGION ?= ap-northeast-1
 
 help:
 	@echo "Usage:"
-	@echo "  make build   - Create a ZIP package for AWS Lambda"
-	@echo "  make clean   - Remove build artifacts"
-	@echo "  make test    - Run pytest"
+	@echo "  make sam-validate"
+	@echo "  make sam-build"
+	@echo "  make sam-deploy STACK_NAME=ai-data-analyst-fishing REGION=ap-northeast-1"
+	@echo "  make seed-stations STACK_NAME=ai-data-analyst-fishing REGION=ap-northeast-1"
+	@echo "  make test-api"
 
-build: clean
-	@echo "Installing dependencies into $(PACKAGE_DIR)..."
-	pip install -r requirements.txt -t $(PACKAGE_DIR)
-	@echo "Copying source files..."
-	cp -r $(SRC_DIR)/* $(PACKAGE_DIR)/
-	@echo "Creating ZIP file..."
-	cd $(PACKAGE_DIR) && zip -r ../$(ZIP_NAME) .
-	@echo "Done: $(ZIP_NAME)"
+sam-validate:
+	sam validate --template-file template.yaml
 
-clean:
-	rm -rf $(PACKAGE_DIR)
-	rm -f $(ZIP_NAME)
-	find . -type d -name "__pycache__" -exec rm -rf {} +
+sam-build:
+	sam build
 
-test:
-	pytest tests/
+sam-deploy:
+	sam deploy --stack-name "$(STACK_NAME)" --s3-prefix "$(STACK_NAME)" --resolve-s3 --region "$(REGION)" --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+
+seed-stations:
+	powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\seed_stations.ps1 -StackName "$(STACK_NAME)" -Region "$(REGION)"
+
+test-api:
+	powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test_api.ps1

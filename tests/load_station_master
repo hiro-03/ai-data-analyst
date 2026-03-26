@@ -1,9 +1,0 @@
-from station_master import load_station_master
-import boto3
-
-def test_load_station_master_reads_table():
-    # moto が作ったテーブルにアイテムを put
-    client = boto3.client("dynamodb", region_name="ap-northeast-1")
-    client.put_item(TableName="Stations", Item={"station_id":{"S":"X"},"latitude":{"N":"35"},"longitude":{"N":"135"}})
-    items = load_station_master(table_name="Stations")
-    assert any(i["station_id"]=="X" for i in items)

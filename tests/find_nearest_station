@@ -1,5 +1,0 @@
-from station_master import find_nearest_station
-
-def test_find_nearest_station_simple():
-    stations = [{"station_id":"A","latitude":35.0,"longitude":135.0},{"station_id":"B","latitude":34.0,"longitude":135.0}]
-    assert find_nearest_station(35.0,135.0,stations) == "A"

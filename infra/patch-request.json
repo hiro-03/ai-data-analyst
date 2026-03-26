@@ -1,7 +1,0 @@
-[
-  {
-    "op": "replace",
-    "path": "/requestTemplates/application~1json",
-    "value": "{\"stateMachineArn\":\"arn:aws:states:ap-northeast-1:476963918877:stateMachine:ai-data-analyst-WeatherObservationStateMachine\",\"input\":\"$util.escapeJavaScript($input.body)\"}"
-  }
-]

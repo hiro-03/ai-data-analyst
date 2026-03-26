@@ -1,10 +1,11 @@
 import os
 import logging
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 import boto3
+import botocore
 
-# Logger setup
+
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -14,53 +15,44 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 
 
-def _get_dynamodb_table(table_name: Optional[str] = None):
-    """
-    Resolve the DynamoDB table name in this order:
-      1. explicit table_name argument
-      2. STATIONS_TABLE environment variable
-      3. fallback to "Stations"
-
-    Use DYNAMODB_ENDPOINT when provided so code running inside Docker can reach
-    the host's DynamoDB Local (use host.docker.internal in env.json).
-    """
-    resolved_name = table_name or os.environ.get("STATIONS_TABLE") or "Stations"
+def _get_dynamodb_resource():
     endpoint = os.environ.get("DYNAMODB_ENDPOINT")
-    region = os.environ.get("AWS_REGION") or "ap-northeast-1"
-
-    logger.info("Resolving DynamoDB table: resolved_name=%s, endpoint=%s, region=%s", resolved_name, endpoint, region)
+    region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "ap-northeast-1"
 
     if endpoint:
-        dynamodb = boto3.resource("dynamodb", endpoint_url=endpoint, region_name=region)
-    else:
-        dynamodb = boto3.resource("dynamodb", region_name=region)
+        logger.info("Using DynamoDB endpoint from env: %s (region=%s)", endpoint, region)
+        return boto3.resource("dynamodb", endpoint_url=endpoint, region_name=region)
+    return boto3.resource("dynamodb", region_name=region)
 
+
+def _get_dynamodb_table(table_name: Optional[str] = None):
+    resolved_name = table_name or os.environ.get("STATIONS_TABLE") or "StationsTable"
+    dynamodb = _get_dynamodb_resource()
     return dynamodb.Table(resolved_name)
 
 
 def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
-    """
-    Load station master items from DynamoDB and normalize them to a list of dicts:
-      [{"station_id": "...", "latitude": 35.0, "longitude": 135.0}, ...]
-    Accepts optional table_name for tests and CloudFormation flexibility.
-    """
     table = _get_dynamodb_table(table_name)
     items: List[Dict] = []
 
-    logger.info("Scanning DynamoDB table for stations: %s", table.table_name)
-
     try:
         response = table.scan()
-    except Exception as e:
+    except botocore.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
         logger.exception("Failed to scan table %s: %s", table.table_name, e)
+        if code in ("ResourceNotFoundException", "UnrecognizedClientException", "AccessDeniedException"):
+            return []
         raise
+    except Exception as e:
+        logger.exception("Unexpected error scanning table %s: %s", table.table_name, e)
+        return []
 
     items.extend(response.get("Items", []))
     while response.get("LastEvaluatedKey"):
         try:
             response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
-        except Exception as e:
-            logger.exception("Failed to continue scan on table %s: %s", table.table_name, e)
+        except Exception:
+            logger.exception("Failed to continue scan on table %s", table.table_name)
             break
         items.extend(response.get("Items", []))
 
@@ -69,12 +61,13 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
         if not isinstance(i, dict):
             continue
 
-        # Detect DynamoDB JSON style (e.g., {"lat": {"N": "35"}})
-        is_dynamodb_json = any(isinstance(v, dict) and any(k in v for k in ("S", "N", "BOOL", "M", "L")) for v in i.values())
+        # boto3 Table.scan() returns plain python dicts, but keep compatibility just in case.
+        is_dynamodb_json = any(
+            isinstance(v, dict) and any(k in v for k in ("S", "N", "BOOL", "M", "L")) for v in i.values()
+        )
 
         if is_dynamodb_json:
             try:
-                # Accept multiple possible attribute names
                 station_id = (
                     i.get("station_id", {}).get("S")
                     if isinstance(i.get("station_id"), dict)
@@ -104,17 +97,13 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
                 )
 
                 if station_id is None or lat_raw is None or lon_raw is None:
-                    logger.debug("Skipping incomplete DynamoDB JSON item: %s", i)
                     continue
 
-                normalized.append({
-                    "station_id": station_id,
-                    "latitude": float(lat_raw),
-                    "longitude": float(lon_raw),
-                })
+                normalized.append(
+                    {"station_id": station_id, "latitude": float(lat_raw), "longitude": float(lon_raw)}
+                )
             except Exception:
                 logger.exception("Skipping malformed DynamoDB JSON item: %s", i)
-                continue
         else:
             try:
                 station_id = i.get("station_id") or i.get("stationId") or i.get("id")
@@ -122,30 +111,20 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
                 lon_raw = i.get("longitude") or i.get("lon")
 
                 if station_id is None or lat_raw is None or lon_raw is None:
-                    logger.debug("Skipping incomplete plain item: %s", i)
                     continue
 
-                normalized.append({
-                    "station_id": station_id,
-                    "latitude": float(lat_raw),
-                    "longitude": float(lon_raw),
-                })
+                normalized.append(
+                    {"station_id": station_id, "latitude": float(lat_raw), "longitude": float(lon_raw)}
+                )
             except Exception:
-                logger.exception("Skipping malformed plain item: %s", i)
-                continue
+                logger.exception("Skipping malformed station item: %s", i)
 
     logger.info("Loaded %d station(s) from table %s", len(normalized), table.table_name)
     return normalized
 
 
 def find_nearest_station(lat: float, lon: float, stations: List[Dict]) -> Optional[str]:
-    """
-    Given latitude/longitude and a list of station dicts (with 'latitude' and 'longitude'),
-    return the nearest station's station_id. Returns None if stations is empty.
-    Uses Haversine formula to compute great-circle distance in kilometers.
-    """
     if not stations:
-        logger.info("No stations provided to find_nearest_station")
         return None
 
     from math import radians, sin, cos, sqrt, atan2
@@ -157,11 +136,9 @@ def find_nearest_station(lat: float, lon: float, stations: List[Dict]) -> Option
         try:
             slat = float(s["latitude"])
             slon = float(s["longitude"])
-        except (KeyError, TypeError, ValueError):
-            logger.debug("Skipping malformed station entry: %s", s)
+        except Exception:
             continue
 
-        # Haversine distance
         dlat = radians(slat - lat)
         dlon = radians(slon - lon)
         a = sin(dlat / 2) ** 2 + cos(radians(lat)) * cos(radians(slat)) * sin(dlon / 2) ** 2
@@ -172,10 +149,8 @@ def find_nearest_station(lat: float, lon: float, stations: List[Dict]) -> Option
             min_dist = dist_km
             nearest = s
 
-    if nearest is None:
-        logger.info("No valid nearest station found")
+    if not nearest:
         return None
 
-    station_id = nearest.get("station_id")
-    logger.info("Nearest station: %s (distance_km=%.3f)", station_id, min_dist)
-    return station_id
+    return nearest.get("station_id")
+

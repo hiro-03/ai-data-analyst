@@ -1,0 +1,18 @@
+[
+  {
+    "station_id": "tokyo-demo",
+    "latitude": 35.681236,
+    "longitude": 139.767125
+  },
+  {
+    "station_id": "osaka-demo",
+    "latitude": 34.702485,
+    "longitude": 135.495951
+  },
+  {
+    "station_id": "sapporo-demo",
+    "latitude": 43.068661,
+    "longitude": 141.350755
+  }
+]
+
