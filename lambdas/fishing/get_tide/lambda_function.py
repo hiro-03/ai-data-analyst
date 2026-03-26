@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -8,6 +9,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from urllib.parse import urlencode
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -62,6 +64,32 @@ def _put_cached(table_name: str, key: str, ttl_epoch: int, payload: Dict[str, An
     _dynamodb_table(table_name).put_item(Item=item)
 
 
+def _http_get_json_with_retry(url: str, headers: Dict[str, str], timeout_s: int = 8, attempts: int = 3) -> Any:
+    last_err: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            req = Request(url=url, headers=headers, method="GET")
+            with urlopen(req, timeout=timeout_s) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except HTTPError as e:
+            last_err = e
+            retryable = e.code in (429, 500, 502, 503, 504)
+            if not retryable or i == attempts - 1:
+                raise
+        except (URLError, TimeoutError) as e:
+            last_err = e
+            if i == attempts - 1:
+                raise
+
+        # exponential backoff + jitter
+        base = 0.3 * (2.5**i)
+        time.sleep(base + random.random() * 0.2)
+    if last_err:
+        raise last_err
+    raise RuntimeError("request failed")
+
+
 def _stormglass_request(api_key: str, lat: float, lon: float, start: datetime, end: datetime) -> Dict[str, Any]:
     base_url = "https://api.stormglass.io/v2/tide/extremes"
     qs = urlencode(
@@ -72,18 +100,17 @@ def _stormglass_request(api_key: str, lat: float, lon: float, start: datetime, e
             "end": str(int(end.timestamp())),
         }
     )
-    req = Request(
-        url=f"{base_url}?{qs}",
+    url = f"{base_url}?{qs}"
+    return _http_get_json_with_retry(
+        url=url,
         headers={
             "Authorization": api_key,
             "Accept": "application/json",
             "User-Agent": "ai-data-analyst/1.0",
         },
-        method="GET",
+        timeout_s=8,
+        attempts=3,
     )
-    with urlopen(req, timeout=8) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw)
 
 
 def _normalize_extremes(resp: Dict[str, Any]) -> Dict[str, Any]:

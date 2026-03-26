@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -8,6 +9,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from urllib.parse import urlencode
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -61,6 +63,31 @@ def _put_cached(table_name: str, key: str, ttl_epoch: int, payload: Dict[str, An
     _dynamodb_table(table_name).put_item(Item=item)
 
 
+def _http_get_json_with_retry(url: str, headers: Dict[str, str], timeout_s: int = 8, attempts: int = 3) -> Any:
+    last_err: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            req = Request(url=url, headers=headers, method="GET")
+            with urlopen(req, timeout=timeout_s) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except HTTPError as e:
+            last_err = e
+            retryable = e.code in (429, 500, 502, 503, 504)
+            if not retryable or i == attempts - 1:
+                raise
+        except (URLError, TimeoutError) as e:
+            last_err = e
+            if i == attempts - 1:
+                raise
+
+        base = 0.3 * (2.5**i)
+        time.sleep(base + random.random() * 0.2)
+    if last_err:
+        raise last_err
+    raise RuntimeError("request failed")
+
+
 def _guess_office_code(lat: float, lon: float) -> str:
     """
     Portfolio-friendly heuristic: choose nearest of a few major offices.
@@ -91,10 +118,12 @@ def _guess_office_code(lat: float, lon: float) -> str:
 
 def _jma_forecast_request(office_code: str) -> Any:
     url = f"https://www.jma.go.jp/bosai/forecast/data/forecast/{office_code}.json"
-    req = Request(url=url, headers={"Accept": "application/json", "User-Agent": "ai-data-analyst/1.0"}, method="GET")
-    with urlopen(req, timeout=8) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw)
+    return _http_get_json_with_retry(
+        url=url,
+        headers={"Accept": "application/json", "User-Agent": "ai-data-analyst/1.0"},
+        timeout_s=8,
+        attempts=3,
+    )
 
 
 def _normalize_jma(resp: Any) -> Dict[str, Any]:

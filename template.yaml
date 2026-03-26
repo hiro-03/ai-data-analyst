@@ -6,6 +6,12 @@ Parameters:
   DeployTimestamp:
     Type: String
     Default: "initial"
+  WafRateLimitPer5Min:
+    Type: Number
+    Default: 500
+  ApiAccessLogRetentionDays:
+    Type: Number
+    Default: 30
 
 Resources:
   ########################################
@@ -20,6 +26,16 @@ Resources:
         info:
           title: Weather Observation API
           version: "1.1"
+        securityDefinitions:
+          CognitoUserPoolAuthorizer:
+            type: apiKey
+            name: Authorization
+            in: header
+            x-amazon-apigateway-authtype: cognito_user_pools
+            x-amazon-apigateway-authorizer:
+              type: cognito_user_pools
+              providerARNs:
+                - Fn::GetAtt: [CognitoUserPool, Arn]
         paths:
           /fishing:
             post:
@@ -27,6 +43,8 @@ Resources:
                 - application/json
               produces:
                 - application/json
+              security:
+                - CognitoUserPoolAuthorizer: []
               parameters:
                 - in: body
                   name: body
@@ -103,6 +121,8 @@ Resources:
         - AttributeName: station_id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   ExternalApiCacheTable:
     Type: AWS::DynamoDB::Table
@@ -118,6 +138,42 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl_epoch
         Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ########################################
+  # Cognito (Auth)
+  ########################################
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-user-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-app-client"
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
 
   ########################################
   # Lambda (Fishing - minimal handlers)
@@ -162,7 +218,8 @@ Resources:
               Action:
                 - ssm:GetParameter
                 - ssm:GetParameters
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/external/stormglass/api-key"
 
   GetMarineDataLambda:
     Type: AWS::Serverless::Function
@@ -227,7 +284,9 @@ Resources:
               Action:
                 - ssm:GetParameter
                 - ssm:GetParameters
-              Resource: "*"
+              Resource:
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/id"
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/alias-id"
 
   ########################################
   # Step Functions EXPRESS (Fishing)
@@ -264,6 +323,12 @@ Resources:
       StateMachineName: !Sub "${AWS::StackName}-FishingAdviceStateMachine"
       StateMachineType: EXPRESS
       RoleArn: !GetAtt FishingAdviceStateMachineRole.Arn
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt SfnLogGroup.Arn
       DefinitionString:
         Fn::Sub:
           - |
@@ -406,16 +471,117 @@ Resources:
 
   WeatherApiStage:
     Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - ApiGatewayAccount
     Properties:
       StageName: prod
       RestApiId: !Ref WeatherApi20260326
       DeploymentId: !Ref WeatherApiDeployment20260324
+      AccessLogSetting:
+        DestinationArn: !GetAtt WeatherApiAccessLogGroup.Arn
+        Format: !Sub >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime",
+          "httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status",
+          "protocol":"$context.protocol","responseLength":"$context.responseLength",
+          "integrationStatus":"$context.integration.status","integrationLatency":"$context.integration.latency",
+          "latency":"$context.responseLatency","userAgent":"$context.identity.userAgent"}
       MethodSettings:
         - MetricsEnabled: true
           LoggingLevel: INFO
-          DataTraceEnabled: true
+          DataTraceEnabled: false
           ResourcePath: "/*"
           HttpMethod: "*"
+          ThrottlingBurstLimit: 50
+          ThrottlingRateLimit: 25
+
+  WeatherApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}/prod/access"
+      RetentionInDays: !Ref ApiAccessLogRetentionDays
+
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ApiGatewayCloudWatchLogsRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-alarms"
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: "f.c.1121h@gmail.com"
+
+  SfnLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/stepfunctions/${AWS::StackName}/FishingAdviceStateMachine"
+      RetentionInDays: 30
+
+  ########################################
+  # WAFv2 (API protection)
+  ########################################
+  WeatherApiWebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${AWS::StackName}-WeatherApi-WebAcl"
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${AWS::StackName}-WeatherApiWebAcl"
+      Rules:
+        - Name: RateLimit
+          Priority: 0
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref WafRateLimitPer5Min
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${AWS::StackName}-RateLimit"
+        - Name: AWSManagedCommonRuleSet
+          Priority: 10
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${AWS::StackName}-CommonRuleSet"
+
+  WeatherApiWebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      WebACLArn: !GetAtt WeatherApiWebAcl.Arn
+      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${WeatherApi20260326}/stages/${WeatherApiStage}"
 
   ########################################
   # CloudWatch Alarms (MLOps minimum)
@@ -424,6 +590,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "Fishing API proxy Lambda errors >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
       Dimensions:
@@ -440,6 +608,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "Fishing API proxy Lambda throttles >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Throttles"
       Dimensions:
@@ -456,6 +626,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "Fishing API proxy Lambda p95 duration > 25s"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Duration"
       Dimensions:
@@ -473,6 +645,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "Fishing inference Lambda errors >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
       Dimensions:
@@ -489,6 +663,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "GetTide Lambda errors >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
       Dimensions:
@@ -505,6 +681,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "GetMarineData Lambda errors >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
       Dimensions:
@@ -521,6 +699,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: "GetForecast Lambda errors >= 1"
+      AlarmActions:
+        - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
       Dimensions:
@@ -540,3 +720,11 @@ Outputs:
       Fn::Sub:
         - "https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/fishing"
         - { RestApiId: !Ref WeatherApi20260326 }
+
+  CognitoUserPoolId:
+    Description: "Cognito User Pool ID (for login)"
+    Value: !Ref CognitoUserPool
+
+  CognitoUserPoolClientId:
+    Description: "Cognito User Pool App Client ID"
+    Value: !Ref CognitoUserPoolClient
