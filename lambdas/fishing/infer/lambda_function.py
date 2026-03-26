@@ -51,6 +51,34 @@ def _unwrap_lambda_proxy(obj: Any) -> Any:
     return obj
 
 
+def _normalize_extras(extras: Any) -> Any:
+    """
+    Step Functions Parallel returns an array of branch outputs.
+    Convert common branch payloads into a single dict for AgentCore.
+    """
+    extras = _unwrap_lambda_proxy(extras)
+    if not isinstance(extras, list):
+        return extras
+
+    merged: Dict[str, Any] = {}
+    for item in extras:
+        item = _unwrap_lambda_proxy(item)
+        if not isinstance(item, dict):
+            continue
+        if "tide" in item:
+            merged["tide"] = item
+            continue
+        if "marine" in item:
+            merged["marine"] = item
+            continue
+        if "forecast" in item:
+            merged["forecast"] = item
+            continue
+        # fallback bucket
+        merged.setdefault("other", []).append(item)
+    return merged
+
+
 def _collect_invoke_agent_completion(resp: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
     """
     bedrock-agent-runtime invoke_agent returns an event stream in resp["completion"].
@@ -147,7 +175,7 @@ def lambda_handler(event, context):
 
     # Extract the most useful fields we have at this stage.
     station = _unwrap_lambda_proxy(unwrapped.get("station")) if isinstance(unwrapped, dict) else None
-    extras = _unwrap_lambda_proxy(unwrapped.get("extras")) if isinstance(unwrapped, dict) else None
+    extras = _normalize_extras(unwrapped.get("extras")) if isinstance(unwrapped, dict) else None
     target_species = unwrapped.get("target_species") if isinstance(unwrapped, dict) else None
     spot_type = unwrapped.get("spot_type") if isinstance(unwrapped, dict) else None
     start_at = unwrapped.get("start_at") if isinstance(unwrapped, dict) else None

@@ -182,6 +182,26 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref ExternalApiCacheTable
 
+  GetForecastLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-get_forecast"
+      Runtime: python3.11
+      CodeUri: lambdas/fishing/get_forecast/
+      Handler: lambda_function.lambda_handler
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          CACHE_TABLE: !Ref ExternalApiCacheTable
+          FORECAST_PROVIDER: "jma"
+          # Optional override; when empty, lambda uses a small nearest-office heuristic
+          JMA_OFFICE_CODE_DEFAULT: ""
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExternalApiCacheTable
+
   FishingInferenceLambda:
     Type: AWS::Serverless::Function
     Properties:
@@ -235,6 +255,7 @@ Resources:
                   - !GetAtt ResolveNearestStationLambda.Arn
                   - !GetAtt GetTideLambda.Arn
                   - !GetAtt GetMarineDataLambda.Arn
+                  - !GetAtt GetForecastLambda.Arn
                   - !GetAtt FishingInferenceLambda.Arn
 
   FishingAdviceStateMachine:
@@ -319,6 +340,35 @@ Resources:
                           "End": true
                         }
                       }
+                    },
+                    {
+                      "StartAt": "GetForecast",
+                      "States": {
+                        "GetForecast": {
+                          "Type": "Task",
+                          "Resource": "arn:aws:states:::lambda:invoke",
+                          "Parameters": {
+                            "FunctionName": "${GetForecastArn}",
+                            "Payload.$": "$"
+                          },
+                          "Catch": [
+                            {
+                              "ErrorEquals": ["States.ALL"],
+                              "ResultPath": "$.error",
+                              "Next": "ForecastFallback"
+                            }
+                          ],
+                          "End": true
+                        },
+                        "ForecastFallback": {
+                          "Type": "Pass",
+                          "Result": {
+                            "provider": "jma",
+                            "error": "forecast fetch failed"
+                          },
+                          "End": true
+                        }
+                      }
                     }
                   ],
                   "ResultPath": "$.extras",
@@ -339,6 +389,7 @@ Resources:
               ResolveStationArn: !GetAtt ResolveNearestStationLambda.Arn,
               GetTideArn: !GetAtt GetTideLambda.Arn,
               GetMarineArn: !GetAtt GetMarineDataLambda.Arn,
+              GetForecastArn: !GetAtt GetForecastLambda.Arn,
               InferArn: !GetAtt FishingInferenceLambda.Arn
             }
 
@@ -459,6 +510,22 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref GetMarineDataLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  GetForecastErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "GetForecast Lambda errors >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GetForecastLambda
       Statistic: Sum
       Period: 60
       EvaluationPeriods: 1

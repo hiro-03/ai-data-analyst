@@ -49,6 +49,11 @@ curl.exe -s -D - -X POST "https://<restApiId>.execute-api.ap-northeast-1.amazona
 ```
 
 ## 🧠 Data collection details
+### Forecast (JMA)
+- Endpoint: `https://www.jma.go.jp/bosai/forecast/data/forecast/{officeCode}.json`
+- Cache key（概念）: `forecast:jma:<office_code>:<YYYY-MM-DD>`
+- TTL: おおむね **+2日**
+- Office code: デフォルトは小さな近似（Tokyo/Osaka/Sapporoの最近傍）。必要なら `JMA_OFFICE_CODE_DEFAULT` で固定できます。
 
 ### Tide (Stormglass)
 - Endpoint: `GET /v2/tide/extremes`
@@ -68,4 +73,5 @@ curl.exe -s -D - -X POST "https://<restApiId>.execute-api.ap-northeast-1.amazona
 
 ## 🧪 Notes
 - `INFERENCE_PROVIDER=mock` の場合、Bedrockなしでレスポンス形だけ確認できます。
+
 
