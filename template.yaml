@@ -196,7 +196,7 @@ Resources:
           CACHE_TABLE: !Ref ExternalApiCacheTable
           FORECAST_PROVIDER: "jma"
           # Optional override; when empty, lambda uses a small nearest-office heuristic
-          JMA_OFFICE_CODE_DEFAULT: ""
+          JMA_OFFICE_CODE_DEFAULT: "130000"
       Policies:
         - AWSLambdaBasicExecutionRole
         - DynamoDBCrudPolicy:
