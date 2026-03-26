@@ -148,6 +148,9 @@ def lambda_handler(event, context):
     # Extract the most useful fields we have at this stage.
     station = _unwrap_lambda_proxy(unwrapped.get("station")) if isinstance(unwrapped, dict) else None
     extras = _unwrap_lambda_proxy(unwrapped.get("extras")) if isinstance(unwrapped, dict) else None
+    target_species = unwrapped.get("target_species") if isinstance(unwrapped, dict) else None
+    spot_type = unwrapped.get("spot_type") if isinstance(unwrapped, dict) else None
+    start_at = unwrapped.get("start_at") if isinstance(unwrapped, dict) else None
 
     facts: Dict[str, Any] = {
         "requested_at": now.isoformat(),
@@ -156,6 +159,11 @@ def lambda_handler(event, context):
             "lon": (unwrapped.get("lon") if isinstance(unwrapped, dict) else None),
         },
         "season": {"month": month, "label": season},
+        "intent": {
+            "target_species": target_species,
+            "spot_type": spot_type,
+            "start_at": start_at,
+        },
         "station": station,
         "extras": extras,
     }

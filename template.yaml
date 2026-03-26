@@ -151,11 +151,18 @@ Resources:
       Environment:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
-          TIDE_PROVIDER: "mock"
+          TIDE_PROVIDER: "stormglass"
+          STORMGLASS_API_KEY: "{{resolve:ssm:/ai-data-analyst/external/stormglass/api-key}}"
       Policies:
         - AWSLambdaBasicExecutionRole
         - DynamoDBCrudPolicy:
             TableName: !Ref ExternalApiCacheTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+              Resource: "*"
 
   GetMarineDataLambda:
     Type: AWS::Serverless::Function
@@ -169,7 +176,7 @@ Resources:
       Environment:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
-          MARINE_PROVIDER: "mock"
+          MARINE_PROVIDER: "openmeteo"
       Policies:
         - AWSLambdaBasicExecutionRole
         - DynamoDBCrudPolicy:
@@ -265,6 +272,21 @@ Resources:
                             "FunctionName": "${GetTideArn}",
                             "Payload.$": "$"
                           },
+                          "Catch": [
+                            {
+                              "ErrorEquals": ["States.ALL"],
+                              "ResultPath": "$.error",
+                              "Next": "TideFallback"
+                            }
+                          ],
+                          "End": true
+                        },
+                        "TideFallback": {
+                          "Type": "Pass",
+                          "Result": {
+                            "provider": "stormglass",
+                            "error": "tide fetch failed"
+                          },
                           "End": true
                         }
                       }
@@ -278,6 +300,21 @@ Resources:
                           "Parameters": {
                             "FunctionName": "${GetMarineArn}",
                             "Payload.$": "$"
+                          },
+                          "Catch": [
+                            {
+                              "ErrorEquals": ["States.ALL"],
+                              "ResultPath": "$.error",
+                              "Next": "MarineFallback"
+                            }
+                          ],
+                          "End": true
+                        },
+                        "MarineFallback": {
+                          "Type": "Pass",
+                          "Result": {
+                            "provider": "openmeteo",
+                            "error": "marine fetch failed"
                           },
                           "End": true
                         }
@@ -390,6 +427,38 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref FishingInferenceLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  GetTideErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "GetTide Lambda errors >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GetTideLambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  GetMarineDataErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "GetMarineData Lambda errors >= 1"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GetMarineDataLambda
       Statistic: Sum
       Period: 60
       EvaluationPeriods: 1
