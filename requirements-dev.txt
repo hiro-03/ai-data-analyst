@@ -2,6 +2,8 @@ pytest
 pytest-cov
 black
 flake8
+mypy
+boto3-stubs[bedrock-agent-runtime,cloudwatch,dynamodb,stepfunctions,ssm]
 boto3
 moto[all]
 pydantic>=2.0,<3

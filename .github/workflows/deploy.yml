@@ -15,11 +15,17 @@ name: Deploy SAM Application
 # 3. Attach the deploy policies to that role.
 #
 # 4. Store secrets in GitHub:
-#    AWS_ROLE_ARN       – IAM role ARN for OIDC
-#    ALARM_EMAIL        – prod alert email
-#    ALARM_EMAIL_STG    – staging alert email
+#    AWS_ROLE_ARN_STG      – IAM role ARN for staging (trust: environment:staging)
+#    AWS_ROLE_ARN_PROD     – IAM role ARN for production (trust: environment:production)
+#    ALARM_EMAIL           – prod alert email
+#    ALARM_EMAIL_STG       – staging alert email
 #    BEDROCK_AGENT_ARN     – prod Bedrock Agent ARN
 #    BEDROCK_AGENT_ARN_STG – staging Bedrock Agent ARN
+#
+# IAM Role separation rationale:
+#   Each environment has its own IAM role with a trust policy restricted to the
+#   matching GitHub Environment name.  This prevents a staging deploy from ever
+#   assuming prod credentials, bounding the blast radius of a misconfiguration.
 # ============================================================
 
 on:
@@ -62,17 +68,20 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
 
-      - name: Configure AWS credentials (OIDC – no long-lived keys)
+      - name: Configure AWS credentials (OIDC – CI uses prod-read role for sam validate)
         uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
           aws-region: ap-northeast-1
 
       - name: Install dev dependencies
         run: pip install -r requirements-dev.txt
 
       - name: Run unit tests
-        run: pytest tests/ --cov=lambdas --cov=layers --cov-report=xml --cov-fail-under=70
+        run: pytest tests/ --cov=lambdas --cov=layers --cov-report=xml --cov-fail-under=80
+
+      - name: Static type check (mypy)
+        run: mypy layers/fishing_common/python/fishing_common/ lambdas/ --ignore-missing-imports --explicit-package-bases --no-error-summary
 
       - name: Upload coverage report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
@@ -113,10 +122,12 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials (OIDC – staging role)
         uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          # AWS_ROLE_ARN_STG trust policy must be scoped to environment:staging
+          # to prevent prod credentials from being assumed in staging jobs.
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
           aws-region: ap-northeast-1
 
       - name: Download SAM build artifact
@@ -133,16 +144,60 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               AlarmEmail="${{ secrets.ALARM_EMAIL_STG }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG }}"
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG }}" \
+              Stage="stg"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Job 3 – Deploy to Production
+# Job 3 – Staging Smoke Test
+# Runs after stg deploy; gates production.  Queries SAM outputs to obtain the
+# staging API URL and Cognito Pool/Client IDs, then exercises the /fishing
+# endpoint end-to-end with a known-good payload.
+# On failure the workflow stops before prod is touched.
+# ──────────────────────────────────────────────────────────────────────────────
+  smoke-test-stg:
+    name: Smoke test → Staging
+    needs: deploy-stg
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'prod' || github.event.inputs.environment == 'both'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.11'
+
+      - name: Configure AWS credentials (OIDC – staging role)
+        uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
+          aws-region: ap-northeast-1
+
+      - name: Run staging smoke test
+        env:
+          STACK_NAME: ai-data-analyst-fishing-stg
+          AWS_REGION: ap-northeast-1
+          COGNITO_PASSWORD: ${{ secrets.STG_SMOKE_USER_PASSWORD }}
+          COGNITO_USERNAME: ${{ secrets.STG_SMOKE_USER_EMAIL }}
+        run: |
+          python scripts/smoke_test.py \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --username "$COGNITO_USERNAME" \
+            --password "$COGNITO_PASSWORD"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 4 – Deploy to Production
 # Requires manual approval via a GitHub Environment with "required reviewers".
 # Configure: Settings → Environments → production → add Required reviewers.
 # ──────────────────────────────────────────────────────────────────────────────
   deploy-prod:
     name: Deploy → Production
-    needs: deploy-stg
+    needs: smoke-test-stg
     runs-on: ubuntu-latest
     environment: production         # ← add required reviewers here in GitHub UI
     if: |
@@ -156,10 +211,13 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials (OIDC – production role)
         uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          # AWS_ROLE_ARN_PROD trust policy must be scoped to environment:production.
+          # This role is strictly separate from AWS_ROLE_ARN_STG so that staging
+          # jobs cannot assume production-level permissions under any circumstances.
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
           aws-region: ap-northeast-1
 
       - name: Download SAM build artifact
@@ -176,4 +234,5 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               AlarmEmail="${{ secrets.ALARM_EMAIL }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN }}"
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN }}" \
+              Stage="prod"

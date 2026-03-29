@@ -6,6 +6,16 @@ Parameters:
   DeployTimestamp:
     Type: String
     Default: "initial"
+  Stage:
+    Type: String
+    Default: "prod"
+    AllowedValues: ["stg", "prod"]
+    Description: >
+      Deployment stage. Controls environment-specific resource behaviour:
+      prod  – DynamoDB DeletionPolicy=Retain, Cognito admin-password-auth disabled,
+              SFN execution data NOT logged (privacy).
+      stg   – DeletionPolicy=Delete, admin-password-auth enabled for CLI testing,
+              SFN execution data logged for debugging.
   WafRateLimitPer5Min:
     Type: Number
     Default: 500
@@ -23,6 +33,12 @@ Parameters:
       Format: arn:aws:bedrock:<region>:<account>:agent/<agent-id>
       Set to specific ARN in production; default '*' allows any agent (initial setup only).
     Default: "*"
+
+Conditions:
+  # True when deploying to production – tightens security and data-retention rules.
+  IsProd: !Equals [!Ref Stage, "prod"]
+  # True in non-prod (stg / local) – enables debugging aids not safe for production.
+  IsNotProd: !Not [!Equals [!Ref Stage, "prod"]]
 
 Resources:
   ########################################
@@ -138,6 +154,10 @@ Resources:
   ########################################
   StationsTable:
     Type: AWS::DynamoDB::Table
+    # Retain in prod: prevents accidental data loss on stack delete/replace.
+    # In stg, Delete allows clean teardown between test cycles.
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
     Properties:
       TableName: !Sub "${AWS::StackName}-Stations"
       AttributeDefinitions:
@@ -152,6 +172,9 @@ Resources:
 
   ExternalApiCacheTable:
     Type: AWS::DynamoDB::Table
+    # Cache table: Retain in prod for auditability; Delete in stg for clean resets.
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
     Properties:
       TableName: !Sub "${AWS::StackName}-ExternalApiCache"
       AttributeDefinitions:
@@ -199,8 +222,10 @@ Resources:
         # SRP: client computes password hash locally – password never sent in cleartext.
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-        # Admin flow for CLI testing; requires AWS IAM credentials, not just a password.
-        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        # Admin-password flow (plain-text password to server) is enabled only in stg
+        # for CLI convenience.  In prod this flow is intentionally absent to reduce
+        # the attack surface; operators must use SRP or federation.
+        - !If [IsNotProd, ALLOW_ADMIN_USER_PASSWORD_AUTH, !Ref AWS::NoValue]
 
   ########################################
   # Lambda (Fishing - minimal handlers)
@@ -387,7 +412,10 @@ Resources:
       RoleArn: !GetAtt FishingAdviceStateMachineRole.Arn
       LoggingConfiguration:
         Level: ALL
-        IncludeExecutionData: true
+        # In prod, execution I/O is NOT logged to prevent API keys and external API
+        # responses (Stormglass, Open-Meteo) from appearing in CloudWatch Logs.
+        # In stg, full execution data is logged to aid debugging.
+        IncludeExecutionData: !If [IsNotProd, true, false]
         Destinations:
           - CloudWatchLogsLogGroup:
               LogGroupArn: !GetAtt SfnLogGroup.Arn
@@ -652,6 +680,31 @@ Resources:
   # to avoid alert fatigue from transient cold-start failures.
   # Duration / throttle alarms keep 3-of-5 for the same reason.
   ########################################
+
+  # API Gateway 5xx – catches gateway-level failures independent of Lambda errors.
+  # Fires when the API itself returns 5xx (e.g., integration timeout, WAF block, throttle).
+  FishingApi5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Fishing API Gateway 5xx errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Namespace: "AWS/ApiGateway"
+      MetricName: "5XXError"
+      Dimensions:
+        - Name: ApiName
+          Value: WeatherRestApi
+        - Name: Stage
+          Value: prod
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
   FishingApiProxyErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -801,13 +854,25 @@ Resources:
 
   ########################################
   # Inference Score Drift Detection
-  # Fires when the average advice score drops below 20 over 3 consecutive
-  # hourly windows – a signal that input data quality has degraded.
+  #
+  # Two-tier approach:
+  #
+  # 1. AbsoluteScoreAlarm  – fires when the 1-hour average score drops below
+  #    50 for 2 consecutive hours.  Catches catastrophic failures (Bedrock
+  #    returning garbage, prompt broken, score field missing → schema default 0).
+  #
+  # 2. ScoreDriftRatioAlarm – Math Expression alarm that computes
+  #    short_avg / long_avg.  Fires when the 1-hour average falls more than
+  #    30% below the 24-hour baseline (ratio < 0.70).  This catches gradual
+  #    degradation that the absolute threshold would miss (e.g., 80 → 55).
+  #
+  # TreatMissingData: notBreaching for both – low-traffic periods should not
+  # generate false alerts.
   ########################################
-  InferenceScoreDriftAlarm:
+  InferenceScoreAbsoluteAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Average fishing advice score < 20 for 3 consecutive hours (possible data drift)"
+      AlarmDescription: "Fishing advice score 1-hour avg < 50 for 2 consecutive hours (catastrophic failure)"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -816,10 +881,51 @@ Resources:
       MetricName: "AdviceScore"
       Statistic: Average
       Period: 3600
-      EvaluationPeriods: 3
-      DatapointsToAlarm: 3
-      Threshold: 20
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 50
       ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+
+  InferenceScoreDriftRatioAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >
+        Fishing advice score: 1-hour avg dropped >30% below 24-hour baseline
+        (ratio < 0.70).  Possible data drift or prompt regression.
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      # Math Expression compares short-window average against long-window baseline.
+      # ratio = short_avg / long_avg.  Alarm fires when ratio < 0.70.
+      Metrics:
+        - Id: short_avg
+          Label: "Score 1h avg"
+          MetricStat:
+            Metric:
+              Namespace: "FishingAdvice/Inference"
+              MetricName: "AdviceScore"
+            Period: 3600
+            Stat: Average
+          ReturnData: false
+        - Id: long_avg
+          Label: "Score 24h baseline"
+          MetricStat:
+            Metric:
+              Namespace: "FishingAdvice/Inference"
+              MetricName: "AdviceScore"
+            Period: 86400
+            Stat: Average
+          ReturnData: false
+        - Id: drift_ratio
+          Label: "Score drift ratio (short/long)"
+          Expression: "short_avg / long_avg"
+          ReturnData: true
+      Threshold: 0.70
+      ComparisonOperator: LessThanThreshold
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
       TreatMissingData: notBreaching
 
 Outputs:

@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 import boto3
 
 from fishing_common.lambda_utils import json_response, try_parse_json, unwrap_lambda_proxy
+from fishing_common.schemas import FishingAdviceResponse
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -73,7 +74,7 @@ def _collect_agent_completion(resp: Dict[str, Any]) -> Tuple[str, Optional[Dict[
     return "".join(text_parts).strip(), trace
 
 
-def _invoke_agentcore(facts: Dict[str, Any], context) -> Dict[str, Any]:
+def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
     agent_id = os.environ.get("BEDROCK_AGENT_ID")
     agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID")
     if not agent_id or not agent_alias_id:
@@ -108,21 +109,24 @@ def _invoke_agentcore(facts: Dict[str, Any], context) -> Dict[str, Any]:
 
     completion_text, _trace = _collect_agent_completion(resp)
     parsed = try_parse_json(completion_text)
-    if isinstance(parsed, dict):
-        return parsed
 
-    return {
-        "summary": str(completion_text)[:2000],
-        "score": {"value": 50, "label": "unstructured"},
-        "season": {},
-        "best_windows": [],
-        "recommended_tactics": [],
-        "risk_and_safety": [],
-        "evidence": ["Agent output was not valid JSON."],
-    }
+    if not isinstance(parsed, dict):
+        # Agent returned non-JSON text – treat as a hard schema violation so that
+        # Step Functions marks the execution FAILED and can trigger a retry/catch.
+        raise ValueError(
+            f"Bedrock agent returned non-JSON output (first 200 chars): "
+            f"{str(completion_text)[:200]!r}"
+        )
+
+    # Validate the parsed dict against the canonical response schema.
+    # ValidationError (Pydantic) propagates to SFN → execution marked FAILED.
+    # This prevents silently passing malformed data downstream and surfaces
+    # prompt-drift issues (missing keys, out-of-range scores, etc.) immediately.
+    validated: FishingAdviceResponse = FishingAdviceResponse.model_validate(parsed)
+    return validated.model_dump()
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     month = now.month
     season = _season_label(month)
@@ -153,15 +157,15 @@ def lambda_handler(event, context):
     }
 
     if provider in ("mock", "local"):
-        response = {
-            "summary": "mock fishing advice (set INFERENCE_PROVIDER=bedrock-agentcore for real)",
-            "score": {"value": 50, "label": "mock"},
-            "season": {"month": month, "label": season},
-            "best_windows": [],
-            "recommended_tactics": [],
-            "risk_and_safety": [],
-            "evidence": ["This is a placeholder response."],
-        }
+        response = FishingAdviceResponse(
+            summary="mock fishing advice (set INFERENCE_PROVIDER=bedrock-agentcore for real)",
+            score={"value": 50, "label": "mock"},
+            season={"month": month, "label": season},
+            best_windows=[],
+            recommended_tactics=[],
+            risk_and_safety=[],
+            evidence=["This is a placeholder response."],
+        ).model_dump()
     else:
         response = _invoke_agentcore(facts, context)
 

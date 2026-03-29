@@ -10,12 +10,12 @@ from fishing_common.http_utils import http_get_json_with_retry
 from fishing_common.lambda_utils import json_response
 
 
-def _cache_key(lat: float, lon: float, day_utc) -> str:
+def _cache_key(lat: float, lon: float, day_utc: Any) -> str:
     return f"tide:stormglass:{lat:.3f}:{lon:.3f}:{day_utc.strftime('%Y-%m-%d')}"
 
 
 def _stormglass_request(
-    api_key: str, lat: float, lon: float, start, end
+    api_key: str, lat: float, lon: float, start: Any, end: Any
 ) -> Dict[str, Any]:
     qs = urlencode(
         {
@@ -64,12 +64,12 @@ def _normalize_extremes(resp: Dict[str, Any]) -> Dict[str, Any]:
     return {"extremes": extremes, "next_high": next_high, "next_low": next_low}
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     requested_at = utc_now()
 
     try:
-        lat = float((event or {}).get("lat"))
-        lon = float((event or {}).get("lon"))
+        lat = float((event or {}).get("lat") or "")
+        lon = float((event or {}).get("lon") or "")
     except Exception:
         return json_response(400, {"error": "lat/lon are required numbers"})
 

@@ -10,11 +10,11 @@ from fishing_common.http_utils import http_get_json_with_retry
 from fishing_common.lambda_utils import json_response
 
 
-def _cache_key(lat: float, lon: float, hour_utc) -> str:
+def _cache_key(lat: float, lon: float, hour_utc: Any) -> str:
     return f"marine:openmeteo:{lat:.3f}:{lon:.3f}:{hour_utc.strftime('%Y-%m-%dT%H')}"
 
 
-def _openmeteo_request(lat: float, lon: float, start, end) -> Dict[str, Any]:
+def _openmeteo_request(lat: float, lon: float, start: Any, end: Any) -> Dict[str, Any]:
     qs = urlencode(
         {
             "latitude": f"{lat:.6f}",
@@ -33,7 +33,7 @@ def _openmeteo_request(lat: float, lon: float, start, end) -> Dict[str, Any]:
     )
 
 
-def _pick_hourly_point(marine_resp: Dict[str, Any], target_hour) -> Dict[str, Any]:
+def _pick_hourly_point(marine_resp: Dict[str, Any], target_hour: Any) -> Dict[str, Any]:
     hourly = marine_resp.get("hourly") if isinstance(marine_resp, dict) else None
     if not isinstance(hourly, dict):
         return {"point": None, "note": "missing hourly"}
@@ -66,12 +66,12 @@ def _pick_hourly_point(marine_resp: Dict[str, Any], target_hour) -> Dict[str, An
     }
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     requested_at = utc_now()
 
     try:
-        lat = float((event or {}).get("lat"))
-        lon = float((event or {}).get("lon"))
+        lat = float((event or {}).get("lat") or "")
+        lon = float((event or {}).get("lon") or "")
     except Exception:
         return json_response(400, {"error": "lat/lon are required numbers"})
 

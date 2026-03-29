@@ -19,7 +19,7 @@ from botocore.exceptions import ClientError
 _dynamodb = boto3.resource("dynamodb")
 
 
-def get_table(name: str):
+def get_table(name: str) -> Any:
     return _dynamodb.Table(name)
 
 
@@ -32,11 +32,12 @@ def get_cached(table_name: str, key: str) -> Optional[Dict[str, Any]]:
         # Current format: payload stored as a JSON string.
         payload_json = item.get("payload_json")
         if isinstance(payload_json, str):
-            return json.loads(payload_json)
+            parsed = json.loads(payload_json)
+            return dict(parsed) if isinstance(parsed, dict) else None
         # Legacy format: payload stored as a DynamoDB Map (no floats).
         payload = item.get("payload")
         if isinstance(payload, dict):
-            return payload
+            return {str(k): v for k, v in payload.items()}
         return None
     except ClientError:
         return None

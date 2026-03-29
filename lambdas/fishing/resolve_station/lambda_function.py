@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Dict
 
 from fishing_common.lambda_utils import json_response, unwrap_lambda_proxy
 from station_master import find_nearest_station, load_station_master
@@ -8,14 +8,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     unwrapped = unwrap_lambda_proxy(event)
     if not isinstance(unwrapped, dict):
         return json_response(400, {"error": "invalid input"})
 
     try:
-        lat = float(unwrapped.get("lat"))
-        lon = float(unwrapped.get("lon"))
+        lat = float(unwrapped.get("lat") or "")
+        lon = float(unwrapped.get("lon") or "")
     except Exception:
         return json_response(400, {"error": "lat and lon are required numbers"})
 

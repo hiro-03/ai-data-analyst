@@ -18,13 +18,14 @@ def http_get_json_with_retry(
     headers: Dict[str, str],
     timeout_s: int = 8,
     attempts: int = 3,
-) -> Any:
+) -> Dict[str, Any]:
     last_err: Optional[Exception] = None
     for i in range(attempts):
         try:
             req = Request(url=url, headers=headers, method="GET")
             with urlopen(req, timeout=timeout_s) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                parsed = json.loads(resp.read().decode("utf-8"))
+                return dict(parsed) if isinstance(parsed, dict) else {"data": parsed}
         except HTTPError as e:
             last_err = e
             if e.code not in (429, 500, 502, 503, 504) or i == attempts - 1:

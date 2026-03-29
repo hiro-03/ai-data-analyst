@@ -82,21 +82,48 @@ class TestInvokeAgentcore:
         assert result["score"]["value"] == 82
         assert result["best_windows"] == ["06:00–08:00"]
 
-    # ── Case 2: agent returns non-JSON text ─────────────────────────────────
-    def test_non_json_response_returns_fallback_structure(self, load_lambda, monkeypatch):
-        """When agent output is not JSON, a safe fallback dict is returned (no exception)."""
+    # ── Case 2: agent returns non-JSON text → ValueError → SFN FAILED ──────
+    def test_non_json_response_raises_value_error(self, load_lambda, monkeypatch):
+        """
+        When agent output is not JSON, _invoke_agentcore must raise ValueError so
+        that Step Functions marks the execution FAILED and the Catch block can
+        handle it (retry, alert, etc.).  Silently returning a fallback would hide
+        prompt-drift issues and corrupt downstream consumers.
+        """
         lf = self._setup_env(monkeypatch, load_lambda)
 
         bedrock_resp = _make_bedrock_response("Sorry, I cannot provide advice right now.")
 
         with patch.object(lf, "_bedrock_agent") as mock_client:
             mock_client.invoke_agent.return_value = bedrock_resp
-            result = lf._invoke_agentcore(_minimal_facts(), _make_context())
+            with pytest.raises(ValueError, match="non-JSON"):
+                lf._invoke_agentcore(_minimal_facts(), _make_context())
 
-        assert isinstance(result, dict)
-        assert "summary" in result
-        assert result["score"]["label"] == "unstructured"
-        assert any("not valid JSON" in ev for ev in result["evidence"])
+    # ── Case 2b: agent returns JSON that fails schema validation ─────────────
+    def test_schema_invalid_json_raises_validation_error(self, load_lambda, monkeypatch):
+        """
+        When Bedrock returns JSON but it violates FishingAdviceResponse (e.g.
+        score.value out of range), Pydantic ValidationError must propagate so
+        the Step Function marks execution FAILED – not pass silently.
+        """
+        import pydantic
+
+        lf = self._setup_env(monkeypatch, load_lambda)
+
+        # score.value = 999 is outside [0, 100]
+        bad_response = {
+            "summary": "ok",
+            "score": {"value": 999, "label": "broken"},
+            "season": {"month": 4, "label": "spring"},
+            "best_windows": [], "recommended_tactics": [],
+            "risk_and_safety": [], "evidence": [],
+        }
+        bedrock_resp = _make_bedrock_response(__import__("json").dumps(bad_response))
+
+        with patch.object(lf, "_bedrock_agent") as mock_client:
+            mock_client.invoke_agent.return_value = bedrock_resp
+            with pytest.raises(pydantic.ValidationError):
+                lf._invoke_agentcore(_minimal_facts(), _make_context())
 
     # ── Case 3: Bedrock raises ClientError ──────────────────────────────────
     def test_bedrock_client_error_propagates(self, load_lambda, monkeypatch):

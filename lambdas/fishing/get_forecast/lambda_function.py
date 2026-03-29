@@ -79,7 +79,7 @@ def _guess_office_code(lat: float, lon: float) -> str:
     return best_code
 
 
-def _cache_key(office_code: str, day_utc) -> str:
+def _cache_key(office_code: str, day_utc: Any) -> str:
     return f"forecast:jma:{office_code}:{day_utc.strftime('%Y-%m-%d')}"
 
 
@@ -123,7 +123,7 @@ def _normalize_jma(resp: Any) -> Dict[str, Any]:
     area_p = _first_area(ts_pop) or {}
 
     area_name = (area_w.get("area") or {}).get("name") if isinstance(area_w.get("area"), dict) else None
-    weathers: Optional[List] = area_w.get("weathers")
+    weathers: Optional[List[Any]] = area_w.get("weathers")
     weather = weathers[0] if isinstance(weathers, list) and weathers else None
 
     pops = area_p.get("pops")
@@ -143,12 +143,12 @@ def _normalize_jma(resp: Any) -> Dict[str, Any]:
     }
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     requested_at = utc_now()
 
     try:
-        lat = float((event or {}).get("lat"))
-        lon = float((event or {}).get("lon"))
+        lat = float((event or {}).get("lat") or "")
+        lon = float((event or {}).get("lon") or "")
     except Exception:
         return json_response(400, {"error": "lat/lon are required numbers"})
 

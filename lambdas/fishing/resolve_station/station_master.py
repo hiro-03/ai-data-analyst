@@ -14,7 +14,7 @@ DYNAMODB_ENDPOINT can be set for local integration testing (e.g. DynamoDB Local)
 import logging
 import os
 from math import atan2, cos, radians, sin, sqrt
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import boto3
 import botocore
@@ -27,10 +27,10 @@ _region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") o
 _dynamodb = boto3.resource("dynamodb", endpoint_url=_endpoint, region_name=_region)
 
 # Keyed by resolved table name.  Survives warm-start invocations.
-_STATION_CACHE: Dict[str, List[Dict]] = {}
+_STATION_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 
-def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
+def load_station_master(table_name: Optional[str] = None) -> List[Dict[str, Any]]:
     resolved = table_name or os.environ.get("STATIONS_TABLE") or "StationsTable"
 
     if resolved in _STATION_CACHE:
@@ -38,7 +38,7 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
         return _STATION_CACHE[resolved]
 
     table = _dynamodb.Table(resolved)
-    items: List[Dict] = []
+    items: List[Dict[str, Any]] = []
 
     try:
         response = table.scan()
@@ -61,7 +61,7 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict]:
             break
         items.extend(response.get("Items", []))
 
-    normalized: List[Dict] = []
+    normalized: List[Dict[str, Any]] = []
     for i in items:
         if not isinstance(i, dict):
             continue
@@ -95,12 +95,12 @@ def clear_station_cache(table_name: Optional[str] = None) -> None:
         _STATION_CACHE.pop(table_name, None)
 
 
-def find_nearest_station(lat: float, lon: float, stations: List[Dict]) -> Optional[str]:
+def find_nearest_station(lat: float, lon: float, stations: List[Dict[str, Any]]) -> Optional[str]:
     if not stations:
         return None
 
     min_dist = float("inf")
-    nearest: Optional[Dict] = None
+    nearest: Optional[Dict[str, Any]] = None
 
     for s in stations:
         try:

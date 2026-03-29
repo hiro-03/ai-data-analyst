@@ -31,11 +31,12 @@ def _parse_body(event: Dict[str, Any]) -> Dict[str, Any]:
         return body
     if isinstance(body, str) and body.strip():
         # Raise ValueError/JSONDecodeError on invalid JSON – caller returns 400.
-        return json.loads(body)
+        parsed = json.loads(body)
+        return dict(parsed) if isinstance(parsed, dict) else {}
     return {}
 
 
-def lambda_handler(event, context):
+def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     trace_id = str(uuid.uuid4())
     t0 = time.time()
 

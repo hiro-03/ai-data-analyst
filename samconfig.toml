@@ -16,7 +16,7 @@ image_repositories  = []
 # Override locally or via GitHub secrets:
 #   AlarmEmail      - alert destination (do not commit real address)
 #   BedrockAgentArn - scoped Bedrock Agent ARN for production
-parameter_overrides = "AlarmEmail=\"ops@example.com\""
+parameter_overrides = "AlarmEmail=\"ops@example.com\" Stage=\"prod\""
 
 [default.global.parameters]
 region = "ap-northeast-1"
@@ -38,7 +38,7 @@ region              = "ap-northeast-1"
 confirm_changeset   = false
 capabilities        = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
 image_repositories  = []
-parameter_overrides = "AlarmEmail=\"stg-ops@example.com\""
+parameter_overrides = "AlarmEmail=\"stg-ops@example.com\" Stage=\"stg\""
 
 [stg.global.parameters]
 region = "ap-northeast-1"
