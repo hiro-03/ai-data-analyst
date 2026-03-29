@@ -12,8 +12,31 @@ Parameters:
   ApiAccessLogRetentionDays:
     Type: Number
     Default: 30
+  AlarmEmail:
+    Type: String
+    Description: "Email address for CloudWatch alarm notifications (override with --parameter-overrides or GitHub secret ALARM_EMAIL)"
+    Default: "ops@example.com"
+  BedrockAgentArn:
+    Type: String
+    Description: >
+      ARN of the Bedrock Agent for InvokeAgent permission scoping.
+      Format: arn:aws:bedrock:<region>:<account>:agent/<agent-id>
+      Set to specific ARN in production; default '*' allows any agent (initial setup only).
+    Default: "*"
 
 Resources:
+  ########################################
+  # Lambda Layer (shared utilities)
+  ########################################
+  FishingCommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AWS::StackName}-fishing-common"
+      ContentUri: layers/fishing_common/
+      CompatibleRuntimes:
+        - python3.11
+      RetentionPolicy: Delete
+
   ########################################
   # API Gateway OpenAPI (Body as mapping)
   ########################################
@@ -88,6 +111,9 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 30
       MemorySize: 512
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
           FISHING_STATE_MACHINE_ARN: !Ref FishingAdviceStateMachine
@@ -159,7 +185,7 @@ Resources:
           MinimumLength: 12
           RequireLowercase: true
           RequireNumbers: true
-          RequireSymbols: false
+          RequireSymbols: true
           RequireUppercase: true
 
   CognitoUserPoolClient:
@@ -170,9 +196,10 @@ Resources:
       GenerateSecret: false
       PreventUserExistenceErrors: ENABLED
       ExplicitAuthFlows:
+        # SRP: client computes password hash locally – password never sent in cleartext.
         - ALLOW_USER_SRP_AUTH
-        - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+        # Admin flow for CLI testing; requires AWS IAM credentials, not just a password.
         - ALLOW_ADMIN_USER_PASSWORD_AUTH
 
   ########################################
@@ -187,6 +214,9 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 10
       MemorySize: 256
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
           STATIONS_TABLE: !Ref StationsTable
@@ -204,6 +234,9 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 15
       MemorySize: 256
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
@@ -230,6 +263,9 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 15
       MemorySize: 256
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
@@ -248,6 +284,9 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 15
       MemorySize: 256
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
@@ -268,9 +307,12 @@ Resources:
       Handler: lambda_function.lambda_handler
       Timeout: 30
       MemorySize: 1024
+      Tracing: Active
+      Layers:
+        - !Ref FishingCommonLayer
       Environment:
         Variables:
-          INFERENCE_PROVIDER: "mock"
+          INFERENCE_PROVIDER: "bedrock-agentcore"
           BEDROCK_AGENT_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
           BEDROCK_AGENT_ALIAS_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/alias-id}}"
       Policies:
@@ -279,7 +321,9 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock-agent-runtime:InvokeAgent
-              Resource: "*"
+              # Scoped to the specific agent ARN passed as a parameter.
+              # Set BedrockAgentArn to the full agent ARN in production.
+              Resource: !Ref BedrockAgentArn
             - Effect: Allow
               Action:
                 - ssm:GetParameter
@@ -287,6 +331,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/id"
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/alias-id"
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  cloudwatch:namespace: "FishingAdvice/Inference"
 
   ########################################
   # Step Functions EXPRESS (Fishing)
@@ -316,6 +367,17 @@ Resources:
                   - !GetAtt GetMarineDataLambda.Arn
                   - !GetAtt GetForecastLambda.Arn
                   - !GetAtt FishingInferenceLambda.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
 
   FishingAdviceStateMachine:
     Type: AWS::StepFunctions::StateMachine
@@ -477,6 +539,7 @@ Resources:
       StageName: prod
       RestApiId: !Ref WeatherApi20260326
       DeploymentId: !Ref WeatherApiDeployment20260324
+      TracingEnabled: true
       AccessLogSetting:
         DestinationArn: !GetAtt WeatherApiAccessLogGroup.Arn
         Format: !Sub >-
@@ -529,7 +592,7 @@ Resources:
     Properties:
       TopicArn: !Ref AlarmTopic
       Protocol: email
-      Endpoint: "f.c.1121h@gmail.com"
+      Endpoint: !Ref AlarmEmail
 
   SfnLogGroup:
     Type: AWS::Logs::LogGroup
@@ -584,13 +647,18 @@ Resources:
       ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${WeatherApi20260326}/stages/${WeatherApiStage}"
 
   ########################################
-  # CloudWatch Alarms (MLOps minimum)
+  # CloudWatch Alarms
+  # Noise-reduction policy: errors use 3-of-5 evaluation (5 min window)
+  # to avoid alert fatigue from transient cold-start failures.
+  # Duration / throttle alarms keep 3-of-5 for the same reason.
   ########################################
   FishingApiProxyErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda errors >= 1"
+      AlarmDescription: "Fishing API proxy Lambda errors >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
@@ -599,7 +667,8 @@ Resources:
           Value: !Ref FishingApiProxyLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
@@ -607,8 +676,10 @@ Resources:
   FishingApiProxyThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda throttles >= 1"
+      AlarmDescription: "Fishing API proxy Lambda throttles >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Throttles"
@@ -617,7 +688,8 @@ Resources:
           Value: !Ref FishingApiProxyLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
@@ -625,8 +697,10 @@ Resources:
   FishingApiProxyDurationP95Alarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda p95 duration > 25s"
+      AlarmDescription: "Fishing API proxy Lambda p95 duration > 25s in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Duration"
@@ -635,8 +709,8 @@ Resources:
           Value: !Ref FishingApiProxyLambda
       ExtendedStatistic: p95
       Period: 60
-      EvaluationPeriods: 3
-      DatapointsToAlarm: 2
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 25000
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
@@ -644,8 +718,10 @@ Resources:
   FishingInferenceErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing inference Lambda errors >= 1"
+      AlarmDescription: "Fishing inference Lambda errors >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
@@ -654,7 +730,8 @@ Resources:
           Value: !Ref FishingInferenceLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
@@ -662,8 +739,10 @@ Resources:
   GetTideErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetTide Lambda errors >= 1"
+      AlarmDescription: "GetTide Lambda errors >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
@@ -672,7 +751,8 @@ Resources:
           Value: !Ref GetTideLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
@@ -680,8 +760,10 @@ Resources:
   GetMarineDataErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetMarineData Lambda errors >= 1"
+      AlarmDescription: "GetMarineData Lambda errors >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
@@ -690,7 +772,8 @@ Resources:
           Value: !Ref GetMarineDataLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
@@ -698,8 +781,10 @@ Resources:
   GetForecastErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetForecast Lambda errors >= 1"
+      AlarmDescription: "GetForecast Lambda errors >= 1 in 3 of 5 consecutive minutes"
       AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
         - !Ref AlarmTopic
       Namespace: "AWS/Lambda"
       MetricName: "Errors"
@@ -708,9 +793,33 @@ Resources:
           Value: !Ref GetForecastLambda
       Statistic: Sum
       Period: 60
-      EvaluationPeriods: 1
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ########################################
+  # Inference Score Drift Detection
+  # Fires when the average advice score drops below 20 over 3 consecutive
+  # hourly windows – a signal that input data quality has degraded.
+  ########################################
+  InferenceScoreDriftAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Average fishing advice score < 20 for 3 consecutive hours (possible data drift)"
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Namespace: "FishingAdvice/Inference"
+      MetricName: "AdviceScore"
+      Statistic: Average
+      Period: 3600
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 20
+      ComparisonOperator: LessThanThreshold
       TreatMissingData: notBreaching
 
 Outputs:

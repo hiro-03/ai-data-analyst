@@ -1,44 +1,179 @@
 name: Deploy SAM Application
 
+# ============================================================
+# GitHub OIDC Setup (one-time, run manually before first deploy)
+# ============================================================
+# 1. Create an IAM OIDC provider for GitHub:
+#    aws iam create-open-id-connect-provider \
+#      --url https://token.actions.githubusercontent.com \
+#      --client-id-list sts.amazonaws.com \
+#      --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+#
+# 2. Create an IAM role (e.g. "github-actions-ai-data-analyst") with trust:
+#    sub: "repo:<ORG>/<REPO>:ref:refs/heads/main"
+#
+# 3. Attach the deploy policies to that role.
+#
+# 4. Store secrets in GitHub:
+#    AWS_ROLE_ARN       – IAM role ARN for OIDC
+#    ALARM_EMAIL        – prod alert email
+#    ALARM_EMAIL_STG    – staging alert email
+#    BEDROCK_AGENT_ARN     – prod Bedrock Agent ARN
+#    BEDROCK_AGENT_ARN_STG – staging Bedrock Agent ARN
+# ============================================================
+
 on:
   push:
     branches: [ main ]
 
+  # Allow manual rollback / hotfix deploys from the Actions UI.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (stg | prod | both)"
+        required: true
+        default: "both"
+        type: choice
+        options: [ stg, prod, both ]
+
+permissions:
+  id-token: write   # Required for OIDC – do NOT remove
+  contents: read
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 1 – CI gate: unit tests + lint + build
+# Runs on every push to main regardless of target environment.
+# ──────────────────────────────────────────────────────────────────────────────
 jobs:
-  deploy:
+  ci:
+    name: CI (test + lint + build)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        # Pin to SHA to guard against tag-mutable supply-chain attacks.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Install AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials (OIDC – no long-lived keys)
+        uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-1
 
-      - name: SAM validate
-        run: sam validate --template-file template.yaml
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest tests/ --cov=lambdas --cov=layers --cov-report=xml --cov-fail-under=70
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: SAM validate (with lint)
+        run: sam validate --template-file template.yaml --lint
 
       - name: SAM build
         run: sam build --use-container
 
-      - name: SAM deploy
+      - name: Upload SAM build artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: sam-build
+          path: .aws-sam/
+          retention-days: 1
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 2 – Deploy to Staging
+# Runs automatically after CI passes.  No manual approval required.
+# ──────────────────────────────────────────────────────────────────────────────
+  deploy-stg:
+    name: Deploy → Staging
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: staging            # maps to a GitHub Environment (no reviewer)
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'stg' || github.event.inputs.environment == 'both'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: Download SAM build artifact
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1
+        with:
+          name: sam-build
+          path: .aws-sam/
+
+      - name: SAM deploy → staging
         run: |
           sam deploy \
-            --stack-name ai-data-analyst-fishing \
-            --s3-prefix ai-data-analyst-fishing \
-            --resolve-s3 \
-            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --config-env stg \
             --no-confirm-changeset \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AlarmEmail="${{ secrets.ALARM_EMAIL_STG }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG }}"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 3 – Deploy to Production
+# Requires manual approval via a GitHub Environment with "required reviewers".
+# Configure: Settings → Environments → production → add Required reviewers.
+# ──────────────────────────────────────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy → Production
+    needs: deploy-stg
+    runs-on: ubuntu-latest
+    environment: production         # ← add required reviewers here in GitHub UI
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'prod' || github.event.inputs.environment == 'both'))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@819220f46b5e73bda99e3691f4af79e93e5d2d65  # v2.2.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@ececc0b117ce8e3fb0c8ca78b87e2deb33f79f9f  # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: Download SAM build artifact
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1
+        with:
+          name: sam-build
+          path: .aws-sam/
+
+      - name: SAM deploy → production
+        run: |
+          sam deploy \
+            --config-env default \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AlarmEmail="${{ secrets.ALARM_EMAIL }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN }}"

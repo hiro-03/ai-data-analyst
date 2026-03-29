@@ -1,4 +1,4 @@
-﻿# Fishing Advice API (Production-ready baseline)
+# Fishing Advice API (Production-ready baseline)
 
 このプロジェクトは、位置情報（lat/lon）から **最寄り観測所**を解決し、
 - **潮汐（Stormglass）**
@@ -31,9 +31,33 @@
 ## 🚀 Deploy
 
 ```powershell
-sam validate --template-file template.yaml
+sam validate --template-file template.yaml --lint
 sam build
-sam deploy --stack-name "ai-data-analyst-fishing" --s3-prefix "ai-data-analyst-fishing" --resolve-s3 --region ap-northeast-1 --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+sam deploy --stack-name "ai-data-analyst-fishing" `
+  --s3-prefix "ai-data-analyst-fishing" `
+  --resolve-s3 --region ap-northeast-1 `
+  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM `
+  --parameter-overrides AlarmEmail="your@email.com" BedrockAgentArn="arn:aws:bedrock:ap-northeast-1:123456789012:agent/ABCDEF"
+```
+
+## 🔒 GitHub Actions OIDC Setup (one-time)
+
+長期 IAM キーを使わず、OIDC フェデレーションによる一時クレデンシャルで CI を動かします。
+
+```bash
+# 1. OIDC プロバイダー作成（アカウントに1つあれば OK）
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+
+# 2. IAM ロール「github-actions-ai-data-analyst」を作成し、
+#    trust policy で repo:<ORG>/<REPO>:ref:refs/heads/main のみ許可。
+#    デプロイに必要なポリシーを attach する。
+
+# 3. GitHub Secrets に追加:
+#    AWS_ROLE_ARN  = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
+#    ALARM_EMAIL   = your@email.com
 ```
 
 ## 🔑 External API Keys (SSM Parameter Store)
@@ -59,6 +83,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\seed_stations.ps1 
 
 デプロイ後、CloudFormation Outputs に `CognitoUserPoolId` と `CognitoUserPoolClientId` が出ます。
 
+> **設計方針**: アプリクライアントは `ALLOW_USER_SRP_AUTH`（パスワードをクライアント側でハッシュ化）のみを許可。
+> CLI テスト用に `ALLOW_ADMIN_USER_PASSWORD_AUTH` を有効化（AWS IAM 認証が必要なため、パスワード単体では使えない）。
+
 ### 1) ユーザー作成（管理者作成）
 
 ```bash
@@ -69,22 +96,23 @@ aws cognito-idp admin-create-user \
   --message-action SUPPRESS
 ```
 
-初期パスワードを設定します。
-
 ```bash
 aws cognito-idp admin-set-user-password \
   --user-pool-id <USER_POOL_ID> \
   --username "demo@example.com" \
-  --password "<STRONG_PASSWORD>" \
+  --password "<STRONG_PASSWORD_12chars+Upper+Num+Symbol>" \
   --permanent
 ```
 
-### 2) トークン取得
+### 2) トークン取得（管理者 API フロー）
+
+`admin-initiate-auth` は AWS IAM 認証を必要とするため、平文パスワードのみでの認証より安全です。
 
 ```bash
-aws cognito-idp initiate-auth \
-  --auth-flow USER_PASSWORD_AUTH \
+aws cognito-idp admin-initiate-auth \
+  --user-pool-id <USER_POOL_ID> \
   --client-id <APP_CLIENT_ID> \
+  --auth-flow ADMIN_USER_PASSWORD_AUTH \
   --auth-parameters USERNAME="demo@example.com",PASSWORD="<STRONG_PASSWORD>"
 ```
 
