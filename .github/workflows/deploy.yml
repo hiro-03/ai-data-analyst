@@ -92,15 +92,8 @@ jobs:
       - name: SAM validate (with lint)
         run: sam validate --template-file template.yaml --lint
 
-      - name: SAM build
+      - name: SAM build (validate only – deploy jobs rebuild independently)
         run: sam build
-
-      - name: Upload SAM build artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: sam-build
-          path: .aws-sam/
-          retention-days: 1
 
 # ------------------------------------------------------------------------------
 # Job 2 - Deploy to Staging
@@ -128,12 +121,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
           aws-region: ap-northeast-1
 
-      - name: Download SAM build artifact
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1
-        with:
-          name: sam-build
-          path: .aws-sam/
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: SAM build
+        run: sam build
 
       - name: SAM deploy to staging
         run: |
@@ -219,12 +208,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
           aws-region: ap-northeast-1
 
-      - name: Download SAM build artifact
-        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1
-        with:
-          name: sam-build
-          path: .aws-sam/
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: SAM build
+        run: sam build
 
       - name: SAM deploy to production
         run: |
