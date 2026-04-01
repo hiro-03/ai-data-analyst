@@ -58,7 +58,7 @@ def _normalize_extras(extras: Any) -> Any:
     return merged
 
 
-def _collect_agent_completion(resp: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+def _collect_agent_completion(resp: Any) -> Tuple[str, Optional[Dict[str, Any]]]:
     text_parts = []
     trace = None
     for event in resp.get("completion", []):
