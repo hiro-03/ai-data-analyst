@@ -151,6 +151,7 @@ jobs:
     name: Smoke test Staging
     needs: deploy-stg
     runs-on: ubuntu-latest
+    environment: staging
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'prod' || github.event.inputs.environment == 'both'))
