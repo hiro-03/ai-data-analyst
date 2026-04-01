@@ -1,31 +1,19 @@
 name: Deploy SAM Application
 
 # ============================================================
-# GitHub OIDC Setup (one-time, run manually before first deploy)
-# ============================================================
-# 1. Create an IAM OIDC provider for GitHub:
-#    aws iam create-open-id-connect-provider \
-#      --url https://token.actions.githubusercontent.com \
-#      --client-id-list sts.amazonaws.com \
-#      --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+# AWS Authentication: IAM user access keys stored as GitHub Secrets.
+#   AWS_ACCESS_KEY_ID     - deploy IAM user access key
+#   AWS_SECRET_ACCESS_KEY - deploy IAM user secret key
 #
-# 2. Create an IAM role (e.g. "github-actions-ai-data-analyst") with trust:
-#    sub: "repo:<ORG>/<REPO>:ref:refs/heads/main"
+# Optional secrets (leave empty to use samconfig.toml defaults):
+#   ALARM_EMAIL           - prod alert email
+#   ALARM_EMAIL_STG       - staging alert email
+#   BEDROCK_AGENT_ARN     - prod Bedrock Agent ARN
+#   BEDROCK_AGENT_ARN_STG - staging Bedrock Agent ARN
 #
-# 3. Attach the deploy policies to that role.
-#
-# 4. Store secrets in GitHub:
-#    AWS_ROLE_ARN_STG      – IAM role ARN for staging (trust: environment:staging)
-#    AWS_ROLE_ARN_PROD     – IAM role ARN for production (trust: environment:production)
-#    ALARM_EMAIL           – prod alert email
-#    ALARM_EMAIL_STG       – staging alert email
-#    BEDROCK_AGENT_ARN     – prod Bedrock Agent ARN
-#    BEDROCK_AGENT_ARN_STG – staging Bedrock Agent ARN
-#
-# IAM Role separation rationale:
-#   Each environment has its own IAM role with a trust policy restricted to the
-#   matching GitHub Environment name.  This prevents a staging deploy from ever
-#   assuming prod credentials, bounding the blast radius of a misconfiguration.
+# Smoke test secrets (required for staging E2E gate):
+#   STG_SMOKE_USER_EMAIL    - Cognito test user email
+#   STG_SMOKE_USER_PASSWORD - Cognito test user password
 # ============================================================
 
 on:
@@ -43,13 +31,12 @@ on:
         options: [ stg, prod, both ]
 
 permissions:
-  id-token: write   # Required for OIDC – do NOT remove
   contents: read
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 1 – CI gate: unit tests + lint + build
+# ------------------------------------------------------------------------------
+# Job 1 - CI gate: unit tests + lint + build
 # Runs on every push to main regardless of target environment.
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 jobs:
   ci:
     name: CI (test + lint + build)
@@ -68,10 +55,11 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@d78e1a4a9656d3b223e59b80676a797f20093133  # v2
 
-      - name: Configure AWS credentials (OIDC – CI uses prod-read role for sam validate)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
 
       - name: Install dev dependencies
@@ -102,15 +90,15 @@ jobs:
           path: .aws-sam/
           retention-days: 1
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 2 – Deploy to Staging
+# ------------------------------------------------------------------------------
+# Job 2 - Deploy to Staging
 # Runs automatically after CI passes.  No manual approval required.
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
   deploy-stg:
-    name: Deploy → Staging
+    name: Deploy to Staging
     needs: ci
     runs-on: ubuntu-latest
-    environment: staging            # maps to a GitHub Environment (no reviewer)
+    environment: staging
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'stg' || github.event.inputs.environment == 'both'))
@@ -122,12 +110,11 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@d78e1a4a9656d3b223e59b80676a797f20093133  # v2
 
-      - name: Configure AWS credentials (OIDC – staging role)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
         with:
-          # AWS_ROLE_ARN_STG trust policy must be scoped to environment:staging
-          # to prevent prod credentials from being assumed in staging jobs.
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
 
       - name: Download SAM build artifact
@@ -136,26 +123,26 @@ jobs:
           name: sam-build
           path: .aws-sam/
 
-      - name: SAM deploy → staging
+      - name: SAM deploy to staging
         run: |
           sam deploy \
             --config-env stg \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              AlarmEmail="${{ secrets.ALARM_EMAIL_STG }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG }}" \
+              AlarmEmail="${{ secrets.ALARM_EMAIL_STG || 'stg-ops@example.com' }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
               Stage="stg"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 3 – Staging Smoke Test
+# ------------------------------------------------------------------------------
+# Job 3 - Staging Smoke Test
 # Runs after stg deploy; gates production.  Queries SAM outputs to obtain the
 # staging API URL and Cognito Pool/Client IDs, then exercises the /fishing
 # endpoint end-to-end with a known-good payload.
 # On failure the workflow stops before prod is touched.
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
   smoke-test-stg:
-    name: Smoke test → Staging
+    name: Smoke test Staging
     needs: deploy-stg
     runs-on: ubuntu-latest
     if: |
@@ -171,11 +158,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Configure AWS credentials (OIDC – staging role)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
+
+      - name: Install smoke test dependencies
+        run: pip install boto3 requests
 
       - name: Run staging smoke test
         env:
@@ -190,16 +181,16 @@ jobs:
             --username "$COGNITO_USERNAME" \
             --password "$COGNITO_PASSWORD"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Job 4 – Deploy to Production
+# ------------------------------------------------------------------------------
+# Job 4 - Deploy to Production
 # Requires manual approval via a GitHub Environment with "required reviewers".
-# Configure: Settings → Environments → production → add Required reviewers.
-# ──────────────────────────────────────────────────────────────────────────────
+# Configure: Settings -> Environments -> production -> add Required reviewers.
+# ------------------------------------------------------------------------------
   deploy-prod:
-    name: Deploy → Production
+    name: Deploy to Production
     needs: smoke-test-stg
     runs-on: ubuntu-latest
-    environment: production         # ← add required reviewers here in GitHub UI
+    environment: production
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'prod' || github.event.inputs.environment == 'both'))
@@ -211,13 +202,11 @@ jobs:
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@d78e1a4a9656d3b223e59b80676a797f20093133  # v2
 
-      - name: Configure AWS credentials (OIDC – production role)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722  # v4.1.0
         with:
-          # AWS_ROLE_ARN_PROD trust policy must be scoped to environment:production.
-          # This role is strictly separate from AWS_ROLE_ARN_STG so that staging
-          # jobs cannot assume production-level permissions under any circumstances.
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
 
       - name: Download SAM build artifact
@@ -226,13 +215,13 @@ jobs:
           name: sam-build
           path: .aws-sam/
 
-      - name: SAM deploy → production
+      - name: SAM deploy to production
         run: |
           sam deploy \
             --config-env default \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              AlarmEmail="${{ secrets.ALARM_EMAIL }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN }}" \
+              AlarmEmail="${{ secrets.ALARM_EMAIL || 'ops@example.com' }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
               Stage="prod"
