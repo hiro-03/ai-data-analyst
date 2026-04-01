@@ -553,8 +553,6 @@ Resources:
   ########################################
   WeatherApiDeployment20260324:
     Type: AWS::ApiGateway::Deployment
-    DependsOn:
-      - WeatherApi20260326
     Properties:
       RestApiId: !Ref WeatherApi20260326
       Description: !Sub "Deployment for prod stage - ${DeployTimestamp}"
