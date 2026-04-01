@@ -891,41 +891,25 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: >
-        Fishing advice score: 1-hour avg dropped >30% below 24-hour baseline
-        (ratio < 0.70).  Possible data drift or prompt regression.
+        Fishing advice score sustained degradation: 1-hour average below 45
+        for 16 of the last 24 hours. Indicates gradual drift or prompt regression
+        that the absolute threshold (< 50 for 2h) would not catch alone.
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
         - !Ref AlarmTopic
-      # Math Expression compares short-window average against long-window baseline.
-      # ratio = short_avg / long_avg.  Alarm fires when ratio < 0.70.
-      Metrics:
-        - Id: short_avg
-          Label: "Score 1h avg"
-          MetricStat:
-            Metric:
-              Namespace: "FishingAdvice/Inference"
-              MetricName: "AdviceScore"
-            Period: 3600
-            Stat: Average
-          ReturnData: false
-        - Id: long_avg
-          Label: "Score 24h baseline"
-          MetricStat:
-            Metric:
-              Namespace: "FishingAdvice/Inference"
-              MetricName: "AdviceScore"
-            Period: 86400
-            Stat: Average
-          ReturnData: false
-        - Id: drift_ratio
-          Label: "Score drift ratio (short/long)"
-          Expression: "short_avg / long_avg"
-          ReturnData: true
-      Threshold: 0.70
+      Namespace: "FishingAdvice/Inference"
+      MetricName: "AdviceScore"
+      Statistic: Average
+      # Period=3600 (1h), EvaluationPeriods=24 → 24h sliding window.
+      # DatapointsToAlarm=16 means alarm fires when 16+ of the 24 hourly
+      # averages are below 45 – catching sustained degradation while tolerating
+      # up to 8 hours of transient noise.
+      Period: 3600
+      EvaluationPeriods: 24
+      DatapointsToAlarm: 16
+      Threshold: 45
       ComparisonOperator: LessThanThreshold
-      EvaluationPeriods: 2
-      DatapointsToAlarm: 2
       TreatMissingData: notBreaching
 
 Outputs:

@@ -1,10 +1,10 @@
 version = 0.1
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # default (= production)
 # Usage: sam deploy                        (uses confirm_changeset = true)
 # CI:    sam deploy --config-env default   (--no-confirm-changeset overridden)
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 [default.deploy.parameters]
 stack_name          = "ai-data-analyst-fishing"
 resolve_s3          = true
@@ -21,15 +21,15 @@ parameter_overrides = "AlarmEmail=\"ops@example.com\" Stage=\"prod\""
 [default.global.parameters]
 region = "ap-northeast-1"
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # stg (staging)
 # Usage: sam deploy --config-env stg
 # Differences from prod:
 #   - Separate stack / S3 prefix so resources are fully isolated.
-#   - confirm_changeset = false  → unattended deploy in CI.
+#   - confirm_changeset = false -> unattended deploy in CI.
 #   - AlarmEmail defaults to a staging alias; override via ALARM_EMAIL_STG.
 #   - BedrockAgentArn should point to a separate staging agent alias.
-# ──────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 [stg.deploy.parameters]
 stack_name          = "ai-data-analyst-fishing-stg"
 resolve_s3          = true
