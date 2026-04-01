@@ -44,6 +44,7 @@ on:
 permissions:
   id-token: write   # Required for OIDC token issuance
   contents: read
+  actions: read     # Required for cross-job artifact download in environment jobs
 
 # ------------------------------------------------------------------------------
 # Job 1 - CI gate: unit tests + lint + build
@@ -132,6 +133,7 @@ jobs:
         with:
           name: sam-build
           path: .aws-sam/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: SAM deploy to staging
         run: |
@@ -222,6 +224,7 @@ jobs:
         with:
           name: sam-build
           path: .aws-sam/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: SAM deploy to production
         run: |
