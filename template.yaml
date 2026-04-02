@@ -46,6 +46,8 @@ Resources:
   ########################################
   FishingCommonLayer:
     Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: python3.11   # triggers pip install -r requirements.txt
     Properties:
       LayerName: !Sub "${AWS::StackName}-fishing-common"
       ContentUri: layers/fishing_common/
