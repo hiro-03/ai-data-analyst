@@ -337,9 +337,17 @@ Resources:
         - !Ref FishingCommonLayer
       Environment:
         Variables:
-          INFERENCE_PROVIDER: "bedrock-agentcore"
-          BEDROCK_AGENT_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
-          BEDROCK_AGENT_ALIAS_ID: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/alias-id}}"
+          # Use mock provider in staging so smoke tests pass without a real
+          # Bedrock Agent. Production always uses bedrock-agentcore.
+          INFERENCE_PROVIDER: !If [IsProd, "bedrock-agentcore", "mock"]
+          BEDROCK_AGENT_ID: !If
+            - IsProd
+            - "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
+            - "mock-agent-id"
+          BEDROCK_AGENT_ALIAS_ID: !If
+            - IsProd
+            - "{{resolve:ssm:/ai-data-analyst/bedrock/agent/alias-id}}"
+            - "mock-alias-id"
       Policies:
         - AWSLambdaBasicExecutionRole
         - Statement:
