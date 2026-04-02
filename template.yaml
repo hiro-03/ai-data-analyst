@@ -563,14 +563,17 @@ Resources:
     Type: AWS::ApiGateway::Deployment
     Properties:
       RestApiId: !Ref WeatherApi20260326
-      Description: !Sub "Deployment for prod stage - ${DeployTimestamp}"
+      Description: !Sub "Deployment for ${Stage} stage - ${DeployTimestamp}"
 
   WeatherApiStage:
     Type: AWS::ApiGateway::Stage
     DependsOn:
       - ApiGatewayAccount
     Properties:
-      StageName: prod
+      # Stage name matches the Stage deployment parameter (stg | prod),
+      # so CloudWatch metrics, access logs, and WAF associations are
+      # correctly isolated between environments.
+      StageName: !Ref Stage
       RestApiId: !Ref WeatherApi20260326
       DeploymentId: !Ref WeatherApiDeployment20260324
       TracingEnabled: true
@@ -594,7 +597,7 @@ Resources:
   WeatherApiAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}/prod/access"
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}/${Stage}/access"
       RetentionInDays: !Ref ApiAccessLogRetentionDays
 
   ApiGatewayCloudWatchLogsRole:
@@ -703,7 +706,7 @@ Resources:
         - Name: ApiName
           Value: WeatherRestApi
         - Name: Stage
-          Value: prod
+          Value: !Ref Stage
       Statistic: Sum
       Period: 60
       EvaluationPeriods: 5
@@ -923,7 +926,7 @@ Outputs:
     Description: "Invoke URL for Fishing API"
     Value:
       Fn::Sub:
-        - "https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/fishing"
+        - "https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/fishing"
         - { RestApiId: !Ref WeatherApi20260326 }
 
   CognitoUserPoolId:

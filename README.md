@@ -52,12 +52,18 @@ aws iam create-open-id-connect-provider \
   --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
 
 # 2. IAM ロール「github-actions-ai-data-analyst」を作成し、
-#    trust policy で repo:<ORG>/<REPO>:ref:refs/heads/main のみ許可。
-#    デプロイに必要なポリシーを attach する。
+#    trust policy (scripts/github-actions-trust-policy.json) を適用。
+#    デプロイに必要なポリシーを attach し、inline ポリシーとして
+#    scripts/deploy-extra-policy.json を追加する。
 
-# 3. GitHub Secrets に追加:
-#    AWS_ROLE_ARN  = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
-#    ALARM_EMAIL   = your@email.com
+# 3. GitHub Secrets に追加（stg / prod でロールを分離）:
+#    AWS_ROLE_ARN_STG  = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
+#    AWS_ROLE_ARN_PROD = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
+#    ALARM_EMAIL       = your@email.com
+#
+# 4. GitHub Environments を設定:
+#    Settings → Environments → staging  : Secrets に STG_SMOKE_USER_EMAIL / STG_SMOKE_USER_PASSWORD
+#    Settings → Environments → production: Required reviewers を追加（手動承認ゲート）
 ```
 
 ## 🔑 External API Keys (SSM Parameter Store)

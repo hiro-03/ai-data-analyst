@@ -1,0 +1,145 @@
+{
+  "Version": "2012-10-17",
+  "Comment": "Inline policy attached to github-actions-ai-data-analyst role. Supplements managed policies to stay within the 10-policy limit. Each statement is scoped to this project's resource ARN patterns where the service supports resource-level permissions. Statements requiring Resource:* are annotated with the AWS constraint that forces it.",
+  "Statement": [
+    {
+      "Sid": "SSMParameterRead",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameters",
+        "ssm:GetParameter",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-1:476963918877:parameter/ai-data-analyst/*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchAlarmsManage",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:EnableAlarmActions",
+        "cloudwatch:DisableAlarmActions",
+        "cloudwatch:SetAlarmState"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:ap-northeast-1:476963918877:alarm:ai-data-analyst-fishing*"
+      ]
+    },
+    {
+      "Sid": "SNSTopicsManage",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:ListSubscriptionsByTopic",
+        "sns:TagResource",
+        "sns:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:sns:ap-northeast-1:476963918877:ai-data-analyst-fishing*"
+      ]
+    },
+    {
+      "Sid": "WAFv2WebACLManage",
+      "Effect": "Allow",
+      "Action": [
+        "wafv2:CreateWebACL",
+        "wafv2:DeleteWebACL",
+        "wafv2:UpdateWebACL",
+        "wafv2:GetWebACL",
+        "wafv2:ListWebACLs",
+        "wafv2:TagResource",
+        "wafv2:UntagResource",
+        "wafv2:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:wafv2:ap-northeast-1:476963918877:regional/webacl/ai-data-analyst-fishing*"
+      ]
+    },
+    {
+      "Sid": "WAFv2AssociateAPIGateway",
+      "Effect": "Allow",
+      "Action": [
+        "wafv2:AssociateWebACL",
+        "wafv2:DisassociateWebACL",
+        "wafv2:GetWebACLForResource"
+      ],
+      "Resource": [
+        "arn:aws:wafv2:ap-northeast-1:476963918877:regional/webacl/ai-data-analyst-fishing*",
+        "arn:aws:apigateway:ap-northeast-1::/restapis/*/stages/*"
+      ]
+    },
+    {
+      "Sid": "XRayTracingAllResources",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:GetSamplingStatisticSummaries"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LogGroupsScopedWrite",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:UntagLogGroup",
+        "logs:ListTagsLogGroup",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/lambda/ai-data-analyst-fishing*",
+        "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/apigateway/ai-data-analyst-fishing*",
+        "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/stepfunctions/ai-data-analyst-fishing*"
+      ]
+    },
+    {
+      "Sid": "LogsDeliveryAndResourcePolicyAllResources",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogDelivery",
+        "logs:DeleteLogDelivery",
+        "logs:GetLogDelivery",
+        "logs:UpdateLogDelivery",
+        "logs:ListLogDeliveries",
+        "logs:PutResourcePolicy",
+        "logs:DescribeResourcePolicies",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockAgentReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:GetAgent",
+        "bedrock:GetAgentAlias",
+        "bedrock:ListAgents",
+        "bedrock:ListAgentAliases",
+        "bedrock:TagResource",
+        "bedrock:UntagResource",
+        "bedrock:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:ap-northeast-1:476963918877:agent/*"
+      ]
+    }
+  ]
+}

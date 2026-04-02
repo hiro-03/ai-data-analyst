@@ -2,8 +2,14 @@
 Staging smoke test script.
 
 Queries CloudFormation stack outputs to obtain the API URL and Cognito
-identifiers, authenticates as a pre-provisioned smoke-test user via SRP,
-and fires a POST /fishing request with a known-good payload.
+identifiers, authenticates as a pre-provisioned smoke-test user via
+ADMIN_USER_PASSWORD_AUTH (plain-text password to Cognito, requires AWS
+IAM credentials on the caller side – safe in CI where OIDC role is
+assumed), and fires a POST /fishing request with a known-good payload.
+
+Note: ADMIN_USER_PASSWORD_AUTH is enabled only for the staging Cognito
+app client (IsNotProd condition in template.yaml). Production uses SRP
+exclusively to avoid transmitting passwords in plain text.
 
 Exit code 0  – smoke test passed (HTTP 200 with a parseable JSON body).
 Exit code 1  – smoke test failed (non-200, timeout, or schema violation).
@@ -43,7 +49,10 @@ def _get_stack_outputs(stack_name: str, region: str) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Cognito SRP authentication (admin-initiate-auth for simplicity in smoke test)
+# Cognito authentication via ADMIN_USER_PASSWORD_AUTH
+# Enabled only on the staging app client (ALLOW_ADMIN_USER_PASSWORD_AUTH
+# is conditional on IsNotProd in template.yaml). Requires AWS IAM
+# credentials on the caller, which are provided by the CI OIDC role.
 # ---------------------------------------------------------------------------
 
 def _get_id_token(
