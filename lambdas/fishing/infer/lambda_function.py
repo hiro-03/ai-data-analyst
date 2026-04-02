@@ -112,12 +112,12 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
     parsed = try_parse_json(completion_text)
 
     if not isinstance(parsed, dict):
-        # エージェントが非 JSON テキストを返した場合はスキーマ違反として扱い、
+        # エージェントが非 JSON（non-JSON）テキストを返した場合はスキーマ違反として扱い、
         # Step Functions の実行を FAILED にしてリトライ/Catch を起動させる。
         # サイレントにフォールバックするとプロンプトドリフトの検出が遅れるため、
         # 即時例外送出を選択する。
         raise ValueError(
-            f"Bedrock エージェントが非 JSON を返しました（先頭200文字）: "
+            f"Bedrock エージェントが non-JSON 出力を返しました（先頭200文字）: "
             f"{str(completion_text)[:200]!r}"
         )
 

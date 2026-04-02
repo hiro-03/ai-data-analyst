@@ -12,6 +12,15 @@ import importlib.util
 import os
 import sys
 
+# station_master がモジュールレベルで boto3.resource() を呼び出すため、
+# インポート前にダミー認証情報を設定しておく。
+# setdefault を使うことで、実際の認証情報が存在する場合は上書きしない。
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
+os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
+os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Layer – must be importable from every Lambda under test.
