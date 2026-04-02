@@ -89,6 +89,15 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
+      - name: Install layer dependencies for Linux runtime
+        run: |
+          pip install \
+            -r layers/fishing_common/requirements.txt \
+            -t layers/fishing_common/python/ \
+            --platform manylinux2014_x86_64 \
+            --only-binary=:all: \
+            --upgrade
+
       - name: SAM validate (with lint)
         run: sam validate --template-file template.yaml --lint
 
@@ -125,6 +134,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_STG }}
           aws-region: ap-northeast-1
+
+      - name: Install layer dependencies for Linux runtime
+        run: |
+          pip install \
+            -r layers/fishing_common/requirements.txt \
+            -t layers/fishing_common/python/ \
+            --platform manylinux2014_x86_64 \
+            --only-binary=:all: \
+            --upgrade
 
       - name: SAM build
         run: sam build
@@ -218,6 +236,15 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
           aws-region: ap-northeast-1
+
+      - name: Install layer dependencies for Linux runtime
+        run: |
+          pip install \
+            -r layers/fishing_common/requirements.txt \
+            -t layers/fishing_common/python/ \
+            --platform manylinux2014_x86_64 \
+            --only-binary=:all: \
+            --upgrade
 
       - name: SAM build
         run: sam build
