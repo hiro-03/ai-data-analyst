@@ -1,8 +1,8 @@
 """
-Fishing inference Lambda.
+釣果推論 Lambda。
 
-Unwraps Step Functions envelopes, assembles facts from tide/marine/forecast,
-then calls Amazon Bedrock AgentCore (InvokeAgent) for the final advice.
+Step Functions エンベロープを展開し、潮汐・海況・気象のファクトを組み立てて
+Amazon Bedrock AgentCore（InvokeAgent）に最終アドバイスを依頼する。
 """
 import json
 import logging
@@ -18,7 +18,7 @@ from fishing_common.schemas import FishingAdviceResponse
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Module-level clients: reused across warm-start invocations.
+# モジュールレベルでクライアントを生成：ウォームスタート時に再利用してレイテンシを削減。
 _bedrock_agent = boto3.client("bedrock-agent-runtime")
 _cloudwatch = boto3.client("cloudwatch")
 
@@ -35,8 +35,9 @@ def _season_label(month: int) -> str:
 
 def _normalize_extras(extras: Any) -> Any:
     """
-    Step Functions Parallel returns an array of branch outputs.
-    Merge into a single dict keyed by data type.
+    Step Functions の Parallel ステートは各ブランチの出力を配列で返す。
+    データ種別（tide / marine / forecast）をキーとした単一 dict にマージして
+    後続の推論ステップが扱いやすい形式に変換する。
     """
     extras = unwrap_lambda_proxy(extras)
     if not isinstance(extras, list):
@@ -78,7 +79,7 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
     agent_id = os.environ.get("BEDROCK_AGENT_ID")
     agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID")
     if not agent_id or not agent_alias_id:
-        raise RuntimeError("BEDROCK_AGENT_ID / BEDROCK_AGENT_ALIAS_ID are required")
+        raise RuntimeError("BEDROCK_AGENT_ID / BEDROCK_AGENT_ALIAS_ID が未設定です")
 
     session_id = getattr(context, "aws_request_id", None) or "session"
     input_payload = {
@@ -111,17 +112,19 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
     parsed = try_parse_json(completion_text)
 
     if not isinstance(parsed, dict):
-        # Agent returned non-JSON text – treat as a hard schema violation so that
-        # Step Functions marks the execution FAILED and can trigger a retry/catch.
+        # エージェントが非 JSON テキストを返した場合はスキーマ違反として扱い、
+        # Step Functions の実行を FAILED にしてリトライ/Catch を起動させる。
+        # サイレントにフォールバックするとプロンプトドリフトの検出が遅れるため、
+        # 即時例外送出を選択する。
         raise ValueError(
-            f"Bedrock agent returned non-JSON output (first 200 chars): "
+            f"Bedrock エージェントが非 JSON を返しました（先頭200文字）: "
             f"{str(completion_text)[:200]!r}"
         )
 
-    # Validate the parsed dict against the canonical response schema.
-    # ValidationError (Pydantic) propagates to SFN → execution marked FAILED.
-    # This prevents silently passing malformed data downstream and surfaces
-    # prompt-drift issues (missing keys, out-of-range scores, etc.) immediately.
+    # パース結果を正規スキーマで検証する。
+    # ValidationError（Pydantic）は SFN に伝播 → 実行が FAILED となる。
+    # これにより、不正なデータが下流に静かに流れることを防ぎ、
+    # スコアの範囲外・必須キー欠損などのプロンプト劣化を即座に検知できる。
     validated: FishingAdviceResponse = FishingAdviceResponse.model_validate(parsed)
     return validated.model_dump()
 
@@ -157,14 +160,16 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     }
 
     if provider in ("mock", "local"):
+        # staging 環境やローカル開発では mock プロバイダーを使用する。
+        # 実際の Bedrock Agent なしでレスポンス形式を確認できる。
         response = FishingAdviceResponse(
-            summary="mock fishing advice (set INFERENCE_PROVIDER=bedrock-agentcore for real)",
+            summary="モック推論結果（実推論は INFERENCE_PROVIDER=bedrock-agentcore を設定）",
             score={"value": 50, "label": "mock"},
             season={"month": month, "label": season},
             best_windows=[],
             recommended_tactics=[],
             risk_and_safety=[],
-            evidence=["This is a placeholder response."],
+            evidence=["これはプレースホルダーレスポンスです。"],
         ).model_dump()
     else:
         response = _invoke_agentcore(facts, context)
@@ -175,8 +180,10 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
 
 def _emit_score_metric(response: Dict[str, Any]) -> None:
     """
-    Publish AdviceScore to CloudWatch for drift detection.
-    Never raises – metrics are best-effort and must not block the main path.
+    CloudWatch にカスタムメトリクス（AdviceScore）を送信する。
+    ドリフト検知アラームの基データとして使用される。
+    メトリクス送信は常に非ブロッキング：失敗しても例外を送出せず、
+    WARNING ログを出力するに留め、メインの推論パスを遮断しない。
     """
     try:
         score_value = response.get("score", {}).get("value")
@@ -193,4 +200,4 @@ def _emit_score_metric(response: Dict[str, Any]) -> None:
             ],
         )
     except Exception:
-        logger.warning("Failed to emit AdviceScore metric; skipping (non-fatal)", exc_info=True)
+        logger.warning("AdviceScore メトリクスの送信に失敗しました（非致命的）", exc_info=True)

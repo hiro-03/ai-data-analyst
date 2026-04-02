@@ -1,12 +1,13 @@
 """
-Shared DynamoDB cache helpers.
+Lambda 関数共通の DynamoDB キャッシュユーティリティ。
 
-The boto3 resource is created once at module level so Lambda warm-start
-executions reuse the existing connection pool.
+boto3 リソースをモジュールレベルで生成することで、Lambda のウォームスタート時に
+コネクションプールを再利用し、コールドスタートのオーバーヘッドを最小化する。
 
-Payload is stored as a JSON string ("payload_json") rather than a DynamoDB
-Map to avoid the boto3 restriction that prohibits Python float values in
-nested attributes (DynamoDB requires Decimal for numbers in Map types).
+ペイロードは DynamoDB Map 型ではなく JSON 文字列（"payload_json"）として保存する。
+理由：boto3 の制約として、Map 型のネスト属性に Python の float 値を書き込めない
+（DynamoDB の数値型は Decimal を要求するため）。JSON 文字列化することでこの制約を回避し、
+float を含む外部 API レスポンスを変換なしにそのままキャッシュできる。
 """
 import json
 import time
@@ -15,7 +16,7 @@ from typing import Any, Dict, Optional
 import boto3
 from botocore.exceptions import ClientError
 
-# Module-level resource: created once per execution environment.
+# モジュールレベルでリソースを生成：Lambda の実行環境ごとに1回のみ初期化される。
 _dynamodb = boto3.resource("dynamodb")
 
 
@@ -29,12 +30,12 @@ def get_cached(table_name: str, key: str) -> Optional[Dict[str, Any]]:
         item = resp.get("Item")
         if not isinstance(item, dict):
             return None
-        # Current format: payload stored as a JSON string.
+        # 現行フォーマット：ペイロードを JSON 文字列で保存
         payload_json = item.get("payload_json")
         if isinstance(payload_json, str):
             parsed = json.loads(payload_json)
             return dict(parsed) if isinstance(parsed, dict) else None
-        # Legacy format: payload stored as a DynamoDB Map (no floats).
+        # 旧フォーマット互換：DynamoDB Map 型で保存（float を含まない場合のみ使用可能）
         payload = item.get("payload")
         if isinstance(payload, dict):
             return {str(k): v for k, v in payload.items()}

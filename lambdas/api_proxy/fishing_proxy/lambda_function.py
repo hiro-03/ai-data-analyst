@@ -1,11 +1,11 @@
 """
-API Gateway proxy Lambda for POST /fishing.
+POST /fishing エンドポイントの API Gateway プロキシ Lambda。
 
-Responsibilities:
-- Validate and parse the request body (strict – no JSON repair hacks).
-- Attach a trace_id for end-to-end correlation.
-- Invoke the Step Functions Express state machine synchronously.
-- Unwrap the SFN output and return it to the caller.
+責務：
+- リクエストボディの厳格なバリデーション・パース（JSON 修復ハックは行わない）
+- エンドツーエンド追跡用の trace_id（UUID）の発行
+- Step Functions Express ステートマシンの同期実行
+- SFN 出力のアンラップと呼び出し元へのレスポンス返却
 """
 import json
 import os
@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from fishing_common.lambda_utils import json_response, unwrap_lambda_proxy
 from fishing_common.schemas import FishingRequest
 
-# Module-level client: reused across warm-start invocations.
+# モジュールレベルでクライアントを生成：ウォームスタート時に再利用してレイテンシを削減。
 _sfn = boto3.client("stepfunctions")
 
 
@@ -30,7 +30,7 @@ def _parse_body(event: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(body, dict):
         return body
     if isinstance(body, str) and body.strip():
-        # Raise ValueError/JSONDecodeError on invalid JSON – caller returns 400.
+        # 不正な JSON は ValueError/JSONDecodeError を送出 → 呼び出し元が 400 を返す
         parsed = json.loads(body)
         return dict(parsed) if isinstance(parsed, dict) else {}
     return {}

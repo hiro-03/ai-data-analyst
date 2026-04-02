@@ -1,9 +1,12 @@
 """
-Shared HTTP utility for Lambda functions.
+Lambda 関数共通の HTTP ユーティリティ。
 
-All external API calls go through http_get_json_with_retry, which provides:
-- Exponential backoff with jitter
-- Retry only on transient errors (429 / 5xx / network)
+外部 API への全リクエストは http_get_json_with_retry を経由します。
+主な機能：
+- ジッター付き指数バックオフによるリトライ
+- 一時的エラー（429 / 5xx / ネットワーク障害）のみリトライ対象とし、
+  4xx（認証失敗・バリデーションエラー）は即時例外送出
+- 外部依存を持たず stdlib のみで実装（Lambda Layer の軽量化）
 """
 import json
 import random
@@ -28,6 +31,7 @@ def http_get_json_with_retry(
                 return dict(parsed) if isinstance(parsed, dict) else {"data": parsed}
         except HTTPError as e:
             last_err = e
+            # 429・5xx はリトライ対象。4xx（認証失敗等）は即時 re-raise して上位に任せる。
             if e.code not in (429, 500, 502, 503, 504) or i == attempts - 1:
                 raise
         except (URLError, TimeoutError) as e:
@@ -35,8 +39,9 @@ def http_get_json_with_retry(
             if i == attempts - 1:
                 raise
 
+        # ジッター（± 0.2s のランダム揺らぎ）を加えてサンダーリング・ハード問題を緩和
         time.sleep(0.3 * (2.5**i) + random.random() * 0.2)
 
     if last_err:
         raise last_err
-    raise RuntimeError("request failed after retries")
+    raise RuntimeError("リトライ上限到達：リクエスト失敗")

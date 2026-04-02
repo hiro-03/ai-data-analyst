@@ -1,11 +1,12 @@
 """
-Shared utilities for Lambda / Step Functions payload handling.
+Lambda / Step Functions ペイロード処理の共通ユーティリティ。
 
-Step Functions lambda:invoke wraps the Lambda response in a Payload envelope:
+Step Functions の lambda:invoke アクションは Lambda レスポンスを以下のエンベロープで包む：
     {"Payload": {"statusCode": 200, "body": "{...}"}, "ExecutedVersion": "$LATEST"}
 
-unwrap_lambda_proxy recursively unwraps both the SFN envelope and the API
-Gateway proxy response shape so downstream functions receive plain dicts.
+unwrap_lambda_proxy は SFN エンベロープと API Gateway プロキシレスポンス形式の両方を
+再帰的に展開し、後続 Lambda が純粋な dict を受け取れるようにする。
+これにより各 Lambda は SFN との連携詳細を意識せず、ビジネスロジックに集中できる。
 """
 import json
 from typing import Any, Dict

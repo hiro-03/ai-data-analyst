@@ -1,6 +1,6 @@
 """
-Shared datetime helpers for Lambda functions.
-All timestamps are normalized to UTC.
+Lambda 関数共通の日時ユーティリティ。
+全タイムスタンプは UTC に正規化する。タイムゾーンなし datetime は UTC として扱う。
 """
 from datetime import datetime, timezone
 from typing import Optional
