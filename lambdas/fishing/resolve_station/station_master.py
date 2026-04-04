@@ -22,12 +22,20 @@ import botocore
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-_endpoint = os.environ.get("DYNAMODB_ENDPOINT") or None
-_region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "ap-northeast-1"
-_dynamodb = boto3.resource("dynamodb", endpoint_url=_endpoint, region_name=_region)
+_dynamodb: Any = None
 
 # Keyed by resolved table name.  Survives warm-start invocations.
 _STATION_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _get_dynamodb() -> Any:
+    """Lazily create the DynamoDB resource on first use."""
+    global _dynamodb
+    if _dynamodb is None:
+        endpoint = os.environ.get("DYNAMODB_ENDPOINT") or None
+        region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "ap-northeast-1"
+        _dynamodb = boto3.resource("dynamodb", endpoint_url=endpoint, region_name=region)
+    return _dynamodb
 
 
 def load_station_master(table_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -37,7 +45,7 @@ def load_station_master(table_name: Optional[str] = None) -> List[Dict[str, Any]
         logger.debug("station_master cache hit for table %s (%d stations)", resolved, len(_STATION_CACHE[resolved]))
         return _STATION_CACHE[resolved]
 
-    table = _dynamodb.Table(resolved)
+    table = _get_dynamodb().Table(resolved)
     items: List[Dict[str, Any]] = []
 
     try:
@@ -89,8 +97,10 @@ def clear_station_cache(table_name: Optional[str] = None) -> None:
     Intended for testing only – production code should never call this.
     Pass table_name to evict a single entry; omit to clear the whole cache.
     """
+    global _dynamodb
     if table_name is None:
         _STATION_CACHE.clear()
+        _dynamodb = None
     else:
         _STATION_CACHE.pop(table_name, None)
 
