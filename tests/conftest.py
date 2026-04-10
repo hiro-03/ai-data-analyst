@@ -1,12 +1,12 @@
 """
-Shared pytest configuration and fixtures.
+共有 pytest 設定とフィクスチャ。
 
-Design:
-- Only the Lambda Layer (fishing_common) and resolve_station (station_master.py)
-  are added to sys.path globally.
-- Individual Lambda modules are loaded on-demand via the `load_lambda` fixture,
-  which uses importlib to give each Lambda a unique module name and avoids
-  name collisions between multiple lambda_function.py files.
+設計:
+- グローバルに sys.path に載せるのは Lambda Layer（fishing_common）と
+  resolve_station（station_master.py）のみ。
+- 各 Lambda モジュールは `load_lambda` フィクスチャでオンデマンド読み込み。
+  importlib で一意のモジュール名を付け、複数の lambda_function.py 間の
+  名前衝突を避ける。
 """
 import importlib.util
 import os
@@ -23,12 +23,12 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Layer – must be importable from every Lambda under test.
+# Layer – テスト対象の各 Lambda から import 可能である必要がある。
 _LAYER_PYTHON = os.path.join(_REPO_ROOT, "layers", "fishing_common", "python")
 if _LAYER_PYTHON not in sys.path:
     sys.path.insert(0, _LAYER_PYTHON)
 
-# resolve_station imports station_master.py as a sibling module.
+# resolve_station は station_master.py を兄弟モジュールとして import する。
 _RESOLVE_DIR = os.path.join(_REPO_ROOT, "lambdas", "fishing", "resolve_station")
 if _RESOLVE_DIR not in sys.path:
     sys.path.insert(0, _RESOLVE_DIR)
@@ -41,7 +41,7 @@ import station_master as _station_master_module
 
 
 # ---------------------------------------------------------------------------
-# AWS credential injection (autouse – every test gets fake creds)
+# AWS 認証情報の注入（autouse – 全テストにダミー認証情報を付与）
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def aws_credentials(monkeypatch):
@@ -53,34 +53,33 @@ def aws_credentials(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Station master cache reset (autouse – prevents test-to-test cache bleed)
+# 観測所マスタキャッシュのリセット（autouse – テスト間のキャッシュ汚染を防ぐ）
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def clear_station_master_cache():
-    """Clear the in-memory station cache before every test."""
+    """各テストの前後でインメモリの観測所キャッシュをクリアする。"""
     _station_master_module.clear_station_cache()
     yield
     _station_master_module.clear_station_cache()
 
 
 # ---------------------------------------------------------------------------
-# Lambda module loader
+# Lambda モジュールローダー
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def load_lambda():
     """
-    Return a factory that imports a Lambda's lambda_function.py by its
-    repo-relative directory path (e.g. "lambdas/api_proxy/fishing_proxy").
+    リポジトリ相対ディレクトリパス（例: lambdas/api_proxy/fishing_proxy）から
+    その Lambda の lambda_function.py を import するファクトリを返す。
 
-    Each call produces a fresh module object with a unique name so multiple
-    Lambda modules can coexist in the same test session without collision.
+    呼び出しごとに一意の名前の新しいモジュールオブジェクトを生成し、
+    同一セッション内で複数 Lambda を衝突なく共存させる。
     """
     def _load(rel_dir: str):
         abs_dir = os.path.join(_REPO_ROOT, rel_dir)
         abs_path = os.path.join(abs_dir, "lambda_function.py")
 
-        # Add the Lambda's own directory to sys.path so local sibling
-        # imports (station_master, etc.) resolve correctly.
+        # Lambda 自身のディレクトリを sys.path に追加し、兄弟 import（station_master 等）を解決する。
         if abs_dir not in sys.path:
             sys.path.insert(0, abs_dir)
 
@@ -94,7 +93,7 @@ def load_lambda():
 
 
 # ---------------------------------------------------------------------------
-# DynamoDB table names
+# DynamoDB テーブル名
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def cache_table_name():
@@ -107,7 +106,7 @@ def stations_table_name():
 
 
 # ---------------------------------------------------------------------------
-# Sample data
+# サンプルデータ
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def sample_stations():
@@ -119,7 +118,7 @@ def sample_stations():
 
 
 # ---------------------------------------------------------------------------
-# Fake Lambda context
+# 擬似 Lambda コンテキスト
 # ---------------------------------------------------------------------------
 class _FakeLambdaContext:
     aws_request_id = "test-request-id"

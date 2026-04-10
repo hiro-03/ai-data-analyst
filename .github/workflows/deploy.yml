@@ -1,41 +1,40 @@
 name: Deploy SAM Application
 
 # ============================================================
-# GitHub OIDC Authentication (one-time setup already complete)
+# GitHub OIDC 認証（初期セットアップ済み）
 # ============================================================
-# IAM OIDC provider: arn:aws:iam::476963918877:oidc-provider/token.actions.githubusercontent.com
-# IAM role:          arn:aws:iam::476963918877:role/github-actions-ai-data-analyst
+# IAM OIDC プロバイダー: arn:aws:iam::476963918877:oidc-provider/token.actions.githubusercontent.com
+# IAM ロール:          arn:aws:iam::476963918877:role/github-actions-ai-data-analyst
 #
-# GitHub Secrets required:
-#   AWS_ROLE_ARN_STG      - IAM role ARN for staging
-#   AWS_ROLE_ARN_PROD     - IAM role ARN for production
+# 必須の GitHub Secrets:
+#   AWS_ROLE_ARN_STG      - ステージング用 IAM ロール ARN
+#   AWS_ROLE_ARN_PROD     - 本番用 IAM ロール ARN
 #
-# Optional secrets (fall back to samconfig.toml defaults if not set):
-#   ALARM_EMAIL           - prod alert email
-#   ALARM_EMAIL_STG       - staging alert email
-#   BEDROCK_AGENT_ARN     - prod Bedrock Agent ARN
-#   BEDROCK_AGENT_ARN_STG - staging Bedrock Agent ARN
+# 任意（未設定なら samconfig.toml の既定値）:
+#   ALARM_EMAIL           - 本番アラートメール
+#   ALARM_EMAIL_STG       - ステージングアラートメール
+#   BEDROCK_AGENT_ARN     - 本番 Bedrock エージェント ARN
+#   BEDROCK_AGENT_ARN_STG - ステージング Bedrock エージェント ARN
 #
-# Smoke test secrets (required for staging E2E gate):
-#   STG_SMOKE_USER_EMAIL    - Cognito test user email
-#   STG_SMOKE_USER_PASSWORD - Cognito test user password
+# スモークテスト用（ステージング E2E ゲートに必須）:
+#   STG_SMOKE_USER_EMAIL    - Cognito テストユーザーのメール
+#   STG_SMOKE_USER_PASSWORD - Cognito テストユーザーのパスワード
 #
-# IAM Role separation rationale:
-#   Each environment uses the same role today; the trust policy is scoped to
-#   repo:hiro-03/ai-data-analyst:* so no other repository can assume it.
-#   To further harden, scope the trust to environment:staging / environment:production
-#   and assign separate roles with least-privilege policies per environment.
+# IAM ロール分離の考え方:
+#   現状は環境ごとに同一ロールを使用。信頼ポリシーは repo:hiro-03/ai-data-analyst:* に限定済みで
+#   他リポジトリからは引き受け不可。さらに厳格化するなら environment:staging / environment:production
+#   にスコープし、環境ごとに最小権限ロールを割り当てる。
 # ============================================================
 
 on:
   push:
     branches: [ main ]
 
-  # Allow manual rollback / hotfix deploys from the Actions UI.
+  # Actions UI から手動ロールバック / ホットフィックスデプロイを許可
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (stg | prod | both)"
+        description: "デプロイ先（stg | prod | both）"
         required: true
         default: "both"
         type: choice
@@ -47,8 +46,8 @@ permissions:
   actions: read     # environment-protected ジョブからのアーティファクト参照に必要
 
 # ------------------------------------------------------------------------------
-# Job 1 - CI gate: unit tests + lint + build
-# Runs on every push to main regardless of target environment.
+# ジョブ 1 - CI ゲート: 単体テスト + リント + ビルド
+# main へのプッシュのたびに実行（デプロイ先に依存しない）
 # ------------------------------------------------------------------------------
 jobs:
   ci:
@@ -57,7 +56,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        # Pin to SHA to guard against tag-mutable supply-chain attacks.
+        # タグ可変によるサプライチェーン攻撃を避けるため SHA で固定
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python
@@ -97,12 +96,12 @@ jobs:
       - name: SAM validate (with lint)
         run: sam validate --template-file template.yaml --lint
 
-      - name: SAM build (validate only – deploy jobs rebuild independently)
+      - name: SAM build (検証のみ – デプロイジョブは別途ビルド)
         run: sam build
 
 # ------------------------------------------------------------------------------
-# Job 2 - Deploy to Staging
-# Runs automatically after CI passes.  No manual approval required.
+# ジョブ 2 - ステージングへデプロイ
+# CI 成功後に自動実行。手動承認は不要。
 # ------------------------------------------------------------------------------
   deploy-stg:
     name: Deploy to Staging
@@ -155,11 +154,10 @@ jobs:
               Stage="stg"
 
 # ------------------------------------------------------------------------------
-# Job 3 - Staging Smoke Test
-# Runs after stg deploy; gates production.  Queries SAM outputs to obtain the
-# staging API URL and Cognito Pool/Client IDs, then exercises the /fishing
-# endpoint end-to-end with a known-good payload.
-# On failure the workflow stops before prod is touched.
+# ジョブ 3 - ステージングスモークテスト
+# stg デプロイ後に実行し、本番へのゲートとする。SAM 出力から API URL と
+# Cognito プール/クライアント ID を取得し、既知の良いペイロードで /fishing を E2E 検証。
+# 失敗時は本番デプロイ前にワークフローを止める。
 # ------------------------------------------------------------------------------
   smoke-test-stg:
     name: Smoke test Staging
@@ -202,9 +200,9 @@ jobs:
             --password "$COGNITO_PASSWORD"
 
 # ------------------------------------------------------------------------------
-# Job 4 - Deploy to Production
-# Requires manual approval via a GitHub Environment with "required reviewers".
-# Configure: Settings -> Environments -> production -> add Required reviewers.
+# ジョブ 4 - 本番デプロイ
+# 「必須レビュアー」付き GitHub Environment による手動承認が必要。
+# 設定: Settings -> Environments -> production -> Required reviewers を追加
 # ------------------------------------------------------------------------------
   deploy-prod:
     name: Deploy to Production

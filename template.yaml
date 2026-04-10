@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Weather API + Fishing Advice API (Step Functions Sync Execution v2)
+Description: 気象 API + 釣りアドバイス API（Step Functions 同期実行 v2）
 
 Parameters:
   DeployTimestamp:
@@ -11,11 +11,11 @@ Parameters:
     Default: "prod"
     AllowedValues: ["stg", "prod"]
     Description: >
-      Deployment stage. Controls environment-specific resource behaviour:
-      prod  – DynamoDB DeletionPolicy=Retain, Cognito admin-password-auth disabled,
-              SFN execution data NOT logged (privacy).
-      stg   – DeletionPolicy=Delete, admin-password-auth enabled for CLI testing,
-              SFN execution data logged for debugging.
+      デプロイステージ。環境ごとのリソース挙動を制御する。
+      prod – DynamoDB は DeletionPolicy=Retain、Cognito の管理者パスワード認証は無効、
+            SFN の実行入出力はログに残さない（プライバシー）。
+      stg  – DeletionPolicy=Delete、CLI テスト用に管理者パスワード認証を有効、
+            デバッグ用に SFN の実行データをログに残す。
   WafRateLimitPer5Min:
     Type: Number
     Default: 500
@@ -24,25 +24,25 @@ Parameters:
     Default: 30
   AlarmEmail:
     Type: String
-    Description: "Email address for CloudWatch alarm notifications (override with --parameter-overrides or GitHub secret ALARM_EMAIL)"
+    Description: "CloudWatch アラーム通知先メール（--parameter-overrides または GitHub の ALARM_EMAIL で上書き）"
     Default: "ops@example.com"
   BedrockAgentArn:
     Type: String
     Description: >
-      ARN of the Bedrock Agent for InvokeAgent permission scoping.
-      Format: arn:aws:bedrock:<region>:<account>:agent/<agent-id>
-      Set to specific ARN in production; default '*' allows any agent (initial setup only).
+      InvokeAgent 権限のスコープに使う Bedrock エージェントの ARN。
+      形式: arn:aws:bedrock:<region>:<account>:agent/<agent-id>
+      本番では具体的な ARN を設定。既定の '*' は任意エージェントを許可（初期セットアップ用のみ）。
     Default: "*"
 
 Conditions:
-  # True when deploying to production – tightens security and data-retention rules.
+  # 本番デプロイ時に真。セキュリティとデータ保持ルールを厳しくする。
   IsProd: !Equals [!Ref Stage, "prod"]
-  # True in non-prod (stg / local) – enables debugging aids not safe for production.
+  # 非本番（stg / ローカル）で真。本番では安全でないデバッグ用の補助を有効にする。
   IsNotProd: !Not [!Equals [!Ref Stage, "prod"]]
 
 Resources:
   ########################################
-  # Lambda Layer (shared utilities)
+  # Lambda Layer（共通ユーティリティ）
   ########################################
   FishingCommonLayer:
     Type: AWS::Serverless::LayerVersion
@@ -54,7 +54,7 @@ Resources:
       RetentionPolicy: Delete
 
   ########################################
-  # API Gateway OpenAPI (Body as mapping)
+  # API Gateway OpenAPI（Body をマッピングとして定義）
   ########################################
   WeatherApi20260326:
     Type: AWS::ApiGateway::RestApi
@@ -116,7 +116,7 @@ Resources:
                   Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FishingApiProxyLambda.Arn}/invocations"
 
   ########################################
-  # Lambda (API Proxy)
+  # Lambda（API プロキシ）
   ########################################
   FishingApiProxyLambda:
     Type: AWS::Serverless::Function
@@ -150,12 +150,12 @@ Resources:
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WeatherApi20260326}/*/POST/fishing"
 
   ########################################
-  # DynamoDB
+  # DynamoDB テーブル
   ########################################
   StationsTable:
     Type: AWS::DynamoDB::Table
-    # Retain in prod: prevents accidental data loss on stack delete/replace.
-    # In stg, Delete allows clean teardown between test cycles.
+    # 本番は Retain: スタック削除・置換時の誤ったデータ消失を防ぐ。
+    # stg は Delete: テストサイクル間のクリーンな解体を許可。
     DeletionPolicy: !If [IsProd, Retain, Delete]
     UpdateReplacePolicy: !If [IsProd, Retain, Delete]
     Properties:
@@ -172,7 +172,7 @@ Resources:
 
   ExternalApiCacheTable:
     Type: AWS::DynamoDB::Table
-    # Cache table: Retain in prod for auditability; Delete in stg for clean resets.
+    # キャッシュテーブル: 本番は監査のため Retain、stg はリセットしやすく Delete。
     DeletionPolicy: !If [IsProd, Retain, Delete]
     UpdateReplacePolicy: !If [IsProd, Retain, Delete]
     Properties:
@@ -191,7 +191,7 @@ Resources:
         PointInTimeRecoveryEnabled: true
 
   ########################################
-  # Cognito (Auth)
+  # Cognito（認証）
   ########################################
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
@@ -219,16 +219,18 @@ Resources:
       GenerateSecret: false
       PreventUserExistenceErrors: ENABLED
       ExplicitAuthFlows:
-        # SRP: client computes password hash locally – password never sent in cleartext.
+        # SRP: クライアントがローカルでパスワードハッシュを計算。平文は送らない。
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-        # Admin-password flow (plain-text password to server) is enabled only in stg
-        # for CLI convenience.  In prod this flow is intentionally absent to reduce
-        # the attack surface; operators must use SRP or federation.
+        # USER_PASSWORD_AUTH: Flutter モバイルクライアント向け。HTTPS 上で送信されるため
+        # 転送中の平文露出はなく、モバイル SDK での SRP 実装コストを回避できる。
+        - ALLOW_USER_PASSWORD_AUTH
+        # 管理者パスワードフロー（サーバへ平文パスワード）は stg のみ CLI 利便のため有効。
+        # 本番では攻撃面削減のため意図的に無効。運用は SRP またはフェデレーションを使用。
         - !If [IsNotProd, ALLOW_ADMIN_USER_PASSWORD_AUTH, !Ref AWS::NoValue]
 
   ########################################
-  # Lambda (Fishing - minimal handlers)
+  # Lambda（釣り – 最小ハンドラ群）
   ########################################
   ResolveNearestStationLambda:
     Type: AWS::Serverless::Function
@@ -316,7 +318,7 @@ Resources:
         Variables:
           CACHE_TABLE: !Ref ExternalApiCacheTable
           FORECAST_PROVIDER: "jma"
-          # Optional override; when empty, lambda uses a small nearest-office heuristic
+          # 任意の上書き。空のときは Lambda 側の簡易「最寄り台所」ヒューリスティックを使用
           JMA_OFFICE_CODE_DEFAULT: "130000"
       Policies:
         - AWSLambdaBasicExecutionRole
@@ -337,8 +339,7 @@ Resources:
         - !Ref FishingCommonLayer
       Environment:
         Variables:
-          # Use mock provider in staging so smoke tests pass without a real
-          # Bedrock Agent. Production always uses bedrock-agentcore.
+          # stg は実エージェントなしでスモークが通るよう mock。本番は常に bedrock-agentcore。
           INFERENCE_PROVIDER: !If [IsProd, "bedrock-agentcore", "mock"]
           BEDROCK_AGENT_ID: !If
             - IsProd
@@ -354,8 +355,8 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock-agent-runtime:InvokeAgent
-              # Scoped to the specific agent ARN passed as a parameter.
-              # Set BedrockAgentArn to the full agent ARN in production.
+              # パラメータで渡したエージェント ARN にスコープ。
+              # 本番では BedrockAgentArn に完全なエージェント ARN を設定すること。
               Resource: !Ref BedrockAgentArn
             - Effect: Allow
               Action:
@@ -373,7 +374,7 @@ Resources:
                   cloudwatch:namespace: "FishingAdvice/Inference"
 
   ########################################
-  # Step Functions EXPRESS (Fishing)
+  # Step Functions EXPRESS（釣りワークフロー）
   ########################################
   FishingAdviceStateMachineRole:
     Type: AWS::IAM::Role
@@ -420,9 +421,9 @@ Resources:
       RoleArn: !GetAtt FishingAdviceStateMachineRole.Arn
       LoggingConfiguration:
         Level: ALL
-        # In prod, execution I/O is NOT logged to prevent API keys and external API
-        # responses (Stormglass, Open-Meteo) from appearing in CloudWatch Logs.
-        # In stg, full execution data is logged to aid debugging.
+        # 本番では API キーや外部 API 応答（Stormglass、Open-Meteo）が
+        # CloudWatch Logs に出ないよう実行入出力をログに残さない。
+        # stg はデバッグのため実行データをログに残す。
         IncludeExecutionData: !If [IsNotProd, true, false]
         Destinations:
           - CloudWatchLogsLogGroup:
@@ -557,7 +558,7 @@ Resources:
             }
 
   ########################################
-  # Deployment & Stage
+  # デプロイとステージ
   ########################################
   WeatherApiDeployment20260324:
     Type: AWS::ApiGateway::Deployment
@@ -570,9 +571,8 @@ Resources:
     DependsOn:
       - ApiGatewayAccount
     Properties:
-      # Stage name matches the Stage deployment parameter (stg | prod),
-      # so CloudWatch metrics, access logs, and WAF associations are
-      # correctly isolated between environments.
+      # ステージ名はデプロイパラメータ Stage（stg | prod）と一致させ、
+      # CloudWatch メトリクス・アクセスログ・WAF の関連付けを環境ごとに分離する。
       StageName: !Ref Stage
       RestApiId: !Ref WeatherApi20260326
       DeploymentId: !Ref WeatherApiDeployment20260324
@@ -638,7 +638,7 @@ Resources:
       RetentionInDays: 30
 
   ########################################
-  # WAFv2 (API protection)
+  # WAFv2（API 保護）
   ########################################
   WeatherApiWebAcl:
     Type: AWS::WAFv2::WebACL
@@ -684,18 +684,18 @@ Resources:
       ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${WeatherApi20260326}/stages/${WeatherApiStage}"
 
   ########################################
-  # CloudWatch Alarms
-  # Noise-reduction policy: errors use 3-of-5 evaluation (5 min window)
-  # to avoid alert fatigue from transient cold-start failures.
-  # Duration / throttle alarms keep 3-of-5 for the same reason.
+  # CloudWatch アラーム
+  # ノイズ低減: エラーは 5 分窓で 5 回中 3 回評価し、
+  # 一時的なコールドスタート失敗でのアラート疲れを避ける。
+  # 時間 / スロットルも同様に 5 回中 3 回。
   ########################################
 
-  # API Gateway 5xx – catches gateway-level failures independent of Lambda errors.
-  # Fires when the API itself returns 5xx (e.g., integration timeout, WAF block, throttle).
+  # API Gateway 5xx – Lambda エラーとは独立したゲートウェイ層の失敗を検知。
+  # API 自体が 5xx を返したときに発火（統合タイムアウト、WAF、スロットルなど）。
   FishingApi5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API Gateway 5xx errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "Fishing API Gateway の 5xx が 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -717,7 +717,7 @@ Resources:
   FishingApiProxyErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "Fishing API プロキシ Lambda のエラーが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -738,7 +738,7 @@ Resources:
   FishingApiProxyThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda throttles >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "Fishing API プロキシ Lambda のスロットルが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -759,7 +759,7 @@ Resources:
   FishingApiProxyDurationP95Alarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing API proxy Lambda p95 duration > 25s in 3 of 5 consecutive minutes"
+      AlarmDescription: "Fishing API プロキシ Lambda の p95 実行時間が 25 秒超（5 分窓で連続 5 回のうち 3 回以上）"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -780,7 +780,7 @@ Resources:
   FishingInferenceErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing inference Lambda errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "Fishing 推論 Lambda のエラーが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -801,7 +801,7 @@ Resources:
   GetTideErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetTide Lambda errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "GetTide Lambda のエラーが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -822,7 +822,7 @@ Resources:
   GetMarineDataErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetMarineData Lambda errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "GetMarineData Lambda のエラーが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -843,7 +843,7 @@ Resources:
   GetForecastErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "GetForecast Lambda errors >= 1 in 3 of 5 consecutive minutes"
+      AlarmDescription: "GetForecast Lambda のエラーが 5 分窓で連続 5 回のうち 3 回以上 1 件以上"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -862,26 +862,23 @@ Resources:
       TreatMissingData: notBreaching
 
   ########################################
-  # Inference Score Drift Detection
+  # 推論スコアのドリフト検知
   #
-  # Two-tier approach:
+  # 二段構成:
   #
-  # 1. AbsoluteScoreAlarm  – fires when the 1-hour average score drops below
-  #    50 for 2 consecutive hours.  Catches catastrophic failures (Bedrock
-  #    returning garbage, prompt broken, score field missing → schema default 0).
+  # 1. AbsoluteScoreAlarm – 1 時間平均スコアが 2 時間連続で 50 を下回ったら発火。
+  #    致命的障害を検知（Bedrock がゴミを返す、プロンプト破損、score 欠落でスキーマ既定 0 など）。
   #
-  # 2. ScoreDriftRatioAlarm – Math Expression alarm that computes
-  #    short_avg / long_avg.  Fires when the 1-hour average falls more than
-  #    30% below the 24-hour baseline (ratio < 0.70).  This catches gradual
-  #    degradation that the absolute threshold would miss (e.g., 80 → 55).
+  # 2. ScoreDriftRatioAlarm – short_avg / long_avg の数式アラーム。
+  #    1 時間平均が 24 時間ベースラインより 30% 以上低下（ratio < 0.70）で発火。
+  #    絶対しきい値では見逃す漸進的劣化（例: 80 → 55）を捕捉。
   #
-  # TreatMissingData: notBreaching for both – low-traffic periods should not
-  # generate false alerts.
+  # 両方 TreatMissingData: notBreaching – 低トラフィック時の誤検知を防ぐ。
   ########################################
   InferenceScoreAbsoluteAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: "Fishing advice score 1-hour avg < 50 for 2 consecutive hours (catastrophic failure)"
+      AlarmDescription: "釣りアドバイススコアの 1 時間平均が 2 時間連続で 50 未満（致命的障害）"
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -900,9 +897,8 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: >
-        Fishing advice score sustained degradation: 1-hour average below 45
-        for 16 of the last 24 hours. Indicates gradual drift or prompt regression
-        that the absolute threshold (< 50 for 2h) would not catch alone.
+        釣りアドバイススコアの持続的劣化: 直近 24 時間のうち 16 時間で 1 時間平均が 45 未満。
+        絶対しきい値（2 時間連続で 50 未満）だけでは捉えにくい漸進的ドリフトやプロンプト劣化を示す。
       AlarmActions:
         - !Ref AlarmTopic
       OKActions:
@@ -910,10 +906,9 @@ Resources:
       Namespace: "FishingAdvice/Inference"
       MetricName: "AdviceScore"
       Statistic: Average
-      # Period=3600 (1h), EvaluationPeriods=24 → 24h sliding window.
-      # DatapointsToAlarm=16 means alarm fires when 16+ of the 24 hourly
-      # averages are below 45 – catching sustained degradation while tolerating
-      # up to 8 hours of transient noise.
+      # Period=3600（1h）、EvaluationPeriods=24 → 24h のスライディング窓。
+      # DatapointsToAlarm=16 は 24 時間のうち 16 時間分以上で平均が 45 未満なら発火。
+      # 持続的劣化を捉えつつ、最大 8 時間程度の一時ノイズは許容。
       Period: 3600
       EvaluationPeriods: 24
       DatapointsToAlarm: 16
@@ -923,16 +918,16 @@ Resources:
 
 Outputs:
   FishingApiUrl:
-    Description: "Invoke URL for Fishing API"
+    Description: "Fishing API の呼び出し URL"
     Value:
       Fn::Sub:
         - "https://${RestApiId}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/fishing"
         - { RestApiId: !Ref WeatherApi20260326 }
 
   CognitoUserPoolId:
-    Description: "Cognito User Pool ID (for login)"
+    Description: "Cognito ユーザープール ID（ログイン用）"
     Value: !Ref CognitoUserPool
 
   CognitoUserPoolClientId:
-    Description: "Cognito User Pool App Client ID"
+    Description: "Cognito アプリクライアント ID"
     Value: !Ref CognitoUserPoolClient

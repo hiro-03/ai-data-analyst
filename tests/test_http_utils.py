@@ -1,5 +1,5 @@
 """
-Tests for fishing_common.http_utils – retry logic.
+fishing_common.http_utils のテスト（リトライロジック）。
 """
 import json
 from io import BytesIO
@@ -15,7 +15,7 @@ _HEADERS = {"Accept": "application/json"}
 
 
 def _mock_response(status: int, body: dict):
-    """Build a fake urlopen response context-manager."""
+    """urlopen 応答のフェイク（コンテキストマネージャ）を組み立てる。"""
     resp = MagicMock()
     resp.__enter__ = lambda s: s
     resp.__exit__ = MagicMock(return_value=False)
@@ -55,7 +55,7 @@ class TestHttpGetJsonWithRetry:
         assert m.call_count == 3
 
     def test_does_not_retry_on_400(self):
-        """Client errors (4xx except 429) must NOT be retried."""
+        """クライアントエラー（429 以外の 4xx）はリトライしないこと。"""
         with patch("fishing_common.http_utils.urlopen") as m:
             m.side_effect = _http_error(400)
             with pytest.raises(HTTPError) as exc_info:

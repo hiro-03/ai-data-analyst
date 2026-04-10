@@ -1,5 +1,5 @@
 """
-Tests for get_tide Lambda – mock mode, cache hit/miss.
+get_tide Lambda のテスト（モックモード、キャッシュヒット/ミス）。
 """
 import json
 import time

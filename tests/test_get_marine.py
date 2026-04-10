@@ -1,5 +1,5 @@
 """
-Tests for get_marine Lambda – mock mode, cache hit/miss.
+get_marine Lambda のテスト（モックモード、キャッシュヒット/ミス）。
 """
 import json
 import time

@@ -10,8 +10,8 @@ from fishing_common.http_utils import http_get_json_with_retry
 from fishing_common.lambda_utils import json_response
 
 # ---------------------------------------------------------------------------
-# JMA office mapping – extend this list without changing the API contract.
-# Format: (office_code, lat, lon, label)
+# 気象庁（JMA）の台所コードマッピング。API 契約を変えずにこのリストを拡張できる。
+# 形式: (office_code, lat, lon, label)
 # ---------------------------------------------------------------------------
 _JMA_OFFICES: Tuple[Tuple[str, float, float, str], ...] = (
     ("016000", 43.068661, 141.350755, "Sapporo"),

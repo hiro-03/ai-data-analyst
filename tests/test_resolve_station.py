@@ -1,5 +1,5 @@
 """
-Tests for resolve_station Lambda – find_nearest_station and lambda_handler.
+resolve_station Lambda のテスト（find_nearest_station と lambda_handler）。
 """
 import json
 

@@ -1,0 +1,20 @@
+# このファイルはアナライザ（Dart コードの静的解析）の設定です。
+# エラー・警告・リントを検出します。
+#
+# 検出結果は Dart 対応 IDE の UI に表示されます（https://dart.dev/tools#ides-and-editors）。
+# コマンドラインでは `flutter analyze` で実行できます。
+
+# 次の行で、Flutter アプリ・パッケージ・プラグイン向けの推奨リント一式を有効にします。
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  # 下の rules で、上記 `package:flutter_lints/flutter.yaml` のルールを無効化したり
+  # 追加ルールを有効にしたりできます。利用可能なリント一覧は https://dart.dev/lints を参照。
+  #
+  # プロジェクト全体ではなく、特定の行やファイルだけ無効にする場合は、
+  # 該当行に `// ignore: ルール名`、ファイル先頭に `// ignore_for_file: ルール名` を使います。
+  rules:
+    # avoid_print: false  # `avoid_print` を無効にする場合はコメントを外す
+    # prefer_single_quotes: true  # `prefer_single_quotes` を有効にする場合はコメントを外す
+
+# 詳細: https://dart.dev/guides/language/analysis-options

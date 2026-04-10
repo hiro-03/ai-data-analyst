@@ -1,5 +1,5 @@
 """
-Tests for fishing_common.schemas (Pydantic v2 validation).
+fishing_common.schemas のテスト（Pydantic v2 検証）。
 """
 import pytest
 from pydantic import ValidationError
@@ -45,7 +45,7 @@ class TestFishingRequest:
             FishingRequest(lat=0.0, lon=-181.0)
 
     def test_boundary_values(self):
-        """Edge values at ±90 / ±180 must be accepted."""
+        """±90 / ±180 の境界値は受理されること。"""
         FishingRequest(lat=90.0, lon=180.0)
         FishingRequest(lat=-90.0, lon=-180.0)
 
@@ -60,7 +60,7 @@ class TestFishingRequest:
             FishingRequest(lat=35.68)
 
     def test_extra_fields_ignored(self):
-        """model_config extra='ignore' must silently drop unknown keys."""
+        """model_config extra='ignore' により未知のキーは黙って破棄されること。"""
         req = FishingRequest(lat=35.0, lon=139.0, unknown_field="should_be_ignored")
         assert not hasattr(req, "unknown_field")
 

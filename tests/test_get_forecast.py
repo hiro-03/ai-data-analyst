@@ -1,5 +1,5 @@
 """
-Tests for get_forecast Lambda – office code selection, mock mode, cache, JMA API.
+get_forecast Lambda のテスト（台所コード選択、モックモード、キャッシュ、気象庁 API）。
 """
 import json
 import time

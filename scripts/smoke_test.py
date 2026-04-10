@@ -1,28 +1,25 @@
 """
-Staging smoke test script.
+ステージング向けスモークテストスクリプト。
 
-Queries CloudFormation stack outputs to obtain the API URL and Cognito
-identifiers, authenticates as a pre-provisioned smoke-test user via
-ADMIN_USER_PASSWORD_AUTH (plain-text password to Cognito, requires AWS
-IAM credentials on the caller side – safe in CI where OIDC role is
-assumed), and fires a POST /fishing request with a known-good payload.
+CloudFormation スタック出力から API URL と Cognito 識別子を取得し、
+ADMIN_USER_PASSWORD_AUTH で事前作成したスモークユーザーとして認証
+（平文パスワードを Cognito に渡す。呼び出し側に AWS IAM 認証情報が必要。
+CI の OIDC ロールで満たす）、既知の良いペイロードで POST /fishing を送る。
 
-Note: ADMIN_USER_PASSWORD_AUTH is enabled only for the staging Cognito
-app client (IsNotProd condition in template.yaml). Production uses SRP
-exclusively to avoid transmitting passwords in plain text.
+注: ADMIN_USER_PASSWORD_AUTH はステージングの Cognito アプリクライアントでのみ有効
+（template.yaml の IsNotProd 条件）。本番は SRP のみで、平文パスワード送信を避ける。
 
-Exit code 0  – smoke test passed (HTTP 200 with a parseable JSON body).
-Exit code 1  – smoke test failed (non-200, timeout, or schema violation).
+終了コード 0 – スモーク成功（HTTP 200 かつ JSON 本文が解釈可能）。
+終了コード 1 – 失敗（非 200、タイムアウト、スキーマ不一致）。
 
-Usage:
+使用例:
     python scripts/smoke_test.py \
         --stack-name ai-data-analyst-fishing-stg \
         --region    ap-northeast-1 \
         --username  smoke@example.com \
         --password  <secret>
 
-The script is intentionally dependency-free (stdlib + boto3 only) so it
-runs without installing the full requirements-dev.txt in CI.
+依存を増やさないよう標準ライブラリ + boto3 のみ（CI で requirements-dev 全体を入れなくてよい）。
 """
 import argparse
 import json
@@ -35,7 +32,7 @@ import boto3
 
 
 # ---------------------------------------------------------------------------
-# CloudFormation helpers
+# CloudFormation ヘルパー
 # ---------------------------------------------------------------------------
 
 def _get_stack_outputs(stack_name: str, region: str) -> Dict[str, str]:
@@ -49,10 +46,9 @@ def _get_stack_outputs(stack_name: str, region: str) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Cognito authentication via ADMIN_USER_PASSWORD_AUTH
-# Enabled only on the staging app client (ALLOW_ADMIN_USER_PASSWORD_AUTH
-# is conditional on IsNotProd in template.yaml). Requires AWS IAM
-# credentials on the caller, which are provided by the CI OIDC role.
+# Cognito 認証（ADMIN_USER_PASSWORD_AUTH）
+# ステージングのアプリクライアントでのみ有効（ALLOW_ADMIN_USER_PASSWORD_AUTH は
+# template.yaml の IsNotProd に依存）。呼び出し側の AWS IAM 認証情報が必要（CI OIDC ロール）。
 # ---------------------------------------------------------------------------
 
 def _get_id_token(
@@ -74,7 +70,7 @@ def _get_id_token(
 
 
 # ---------------------------------------------------------------------------
-# Smoke test request
+# スモークテスト用リクエスト
 # ---------------------------------------------------------------------------
 
 def _post_fishing(api_url: str, token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,15 +96,15 @@ def _post_fishing(api_url: str, token: str, payload: Dict[str, Any]) -> Dict[str
 
 
 # ---------------------------------------------------------------------------
-# Main
+# メイン
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Staging smoke test for the Fishing API")
+    parser = argparse.ArgumentParser(description="ステージング向け Fishing API スモークテスト")
     parser.add_argument("--stack-name", required=True)
     parser.add_argument("--region", default="ap-northeast-1")
-    parser.add_argument("--username", required=True, help="Cognito smoke-test user email")
-    parser.add_argument("--password", required=True, help="Cognito smoke-test user password")
+    parser.add_argument("--username", required=True, help="Cognito スモークテストユーザーのメール")
+    parser.add_argument("--password", required=True, help="Cognito スモークテストユーザーのパスワード")
     args = parser.parse_args()
 
     print(f"[smoke] Fetching outputs for stack: {args.stack_name}")

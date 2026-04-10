@@ -1,11 +1,11 @@
 """
-Tests for fishing_proxy Lambda (API Gateway entry point).
+fishing_proxy Lambda（API Gateway エントリポイント）のテスト。
 
-Coverage:
-- Input validation (lat/lon range, missing fields, malformed JSON)
-- Step Functions status handling: SUCCEEDED / FAILED / TIMED_OUT / ABORTED
-- Trace ID and latency injection
-- Optional field forwarding
+カバレッジ:
+- 入力検証（lat/lon 範囲、欠落フィールド、不正 JSON）
+- Step Functions ステータス: SUCCEEDED / FAILED / TIMED_OUT / ABORTED
+- trace_id と latency の付与
+- 任意フィールドの SFN への転送
 """
 import json
 import uuid
@@ -18,7 +18,7 @@ _SM_ARN = "arn:aws:states:ap-northeast-1:123456789012:stateMachine:test"
 
 
 class _FakeSfnClient:
-    """Configurable fake that returns an arbitrary SFN response dict."""
+    """任意の SFN 応答 dict を返すように設定可能なフェイク。"""
     def __init__(self, sfn_response: dict):
         self._response = sfn_response
 
@@ -106,7 +106,7 @@ class TestFishingProxyInputValidation:
             resp = lf.lambda_handler(_event({"lat": 35.0, "lon": 139.0}), lambda_context)
         body = json.loads(resp["body"])
         assert "trace_id" in body
-        uuid.UUID(body["trace_id"])  # raises if not valid UUID
+        uuid.UUID(body["trace_id"])  # 不正なら例外
 
     def test_optional_fields_forwarded_to_sfn(self, load_lambda, monkeypatch, lambda_context):
         captured = {}
@@ -127,13 +127,13 @@ class TestFishingProxyInputValidation:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step Functions status handling
+# Step Functions ステータス処理
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSfnStatusHandling:
     """
-    Verify that non-SUCCEEDED statuses map to correct HTTP error codes and
-    that the failure cause is surfaced to the caller.
+    SUCCEEDED 以外のステータスが正しい HTTP エラーコードにマップされ、
+    失敗原因が呼び出し元に返ることを検証する。
     """
 
     def _lf(self, load_lambda, monkeypatch):
@@ -147,7 +147,7 @@ class TestSfnStatusHandling:
         assert resp["statusCode"] == 200
 
     def test_sfn_failed_returns_502(self, load_lambda, monkeypatch, lambda_context):
-        """FAILED execution → 502 Bad Gateway with cause in body."""
+        """FAILED → 502 Bad Gateway、本文に cause。"""
         lf = self._lf(load_lambda, monkeypatch)
         with patch.object(lf, "_sfn", _FakeSfnClient(_sfn_failed("timeout in get_tide"))):
             resp = lf.lambda_handler(_event({"lat": 35.0, "lon": 139.0}), lambda_context)
@@ -158,7 +158,7 @@ class TestSfnStatusHandling:
         assert "timeout in get_tide" in body["cause"]
 
     def test_sfn_timed_out_returns_504(self, load_lambda, monkeypatch, lambda_context):
-        """TIMED_OUT execution → 504 Gateway Timeout."""
+        """TIMED_OUT → 504 Gateway Timeout。"""
         lf = self._lf(load_lambda, monkeypatch)
         with patch.object(lf, "_sfn", _FakeSfnClient(_sfn_timed_out())):
             resp = lf.lambda_handler(_event({"lat": 35.0, "lon": 139.0}), lambda_context)
@@ -168,7 +168,7 @@ class TestSfnStatusHandling:
         assert "TIMED_OUT" in body["error"]
 
     def test_sfn_aborted_returns_502(self, load_lambda, monkeypatch, lambda_context):
-        """ABORTED execution → 502 (same bucket as FAILED)."""
+        """ABORTED → 502（FAILED と同じ扱い）。"""
         lf = self._lf(load_lambda, monkeypatch)
         aborted = {"status": "ABORTED", "cause": "Manual stop"}
         with patch.object(lf, "_sfn", _FakeSfnClient(aborted)):
@@ -179,7 +179,7 @@ class TestSfnStatusHandling:
         assert "ABORTED" in body["error"]
 
     def test_trace_id_present_in_error_response(self, load_lambda, monkeypatch, lambda_context):
-        """Even on error, trace_id must be returned for end-to-end correlation."""
+        """エラー時も end-to-end 相関のため trace_id を返す。"""
         lf = self._lf(load_lambda, monkeypatch)
         with patch.object(lf, "_sfn", _FakeSfnClient(_sfn_failed())):
             resp = lf.lambda_handler(_event({"lat": 35.0, "lon": 139.0}), lambda_context)

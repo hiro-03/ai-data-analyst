@@ -1,15 +1,14 @@
 """
-DynamoDB-backed station master loader.
+DynamoDB バックの観測所マスタローダー。
 
-The boto3 resource is created once at module level so warm-start Lambda
-executions skip the connection setup overhead.
+boto3 の resource はモジュール先頭で一度だけ作成し、ウォームスタートの Lambda では
+接続オーバーヘッドを省略する。
 
-In-memory cache: _STATION_CACHE holds the loaded station list keyed by table
-name.  A warm-start invocation that targets the same table skips the full
-DynamoDB scan entirely.  Cache is invalidated only on cold-start or when the
-Lambda execution environment is recycled by AWS.
+インメモリキャッシュ: _STATION_CACHE はテーブル名をキーに観測所一覧を保持。
+同一テーブルを対象にするウォームスタートでは DynamoDB 全件スキャンを省略する。
+キャッシュはコールドスタート時、または AWS が実行環境を回収したときに無効化される。
 
-DYNAMODB_ENDPOINT can be set for local integration testing (e.g. DynamoDB Local).
+ローカル結合テストでは DYNAMODB_ENDPOINT を設定可能（例: DynamoDB Local）。
 """
 import logging
 import os
@@ -26,7 +25,7 @@ _endpoint = os.environ.get("DYNAMODB_ENDPOINT") or None
 _region = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION") or "ap-northeast-1"
 _dynamodb = boto3.resource("dynamodb", endpoint_url=_endpoint, region_name=_region)
 
-# Keyed by resolved table name.  Survives warm-start invocations.
+# 解決済みテーブル名をキーにする。ウォームスタート間で保持される。
 _STATION_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 

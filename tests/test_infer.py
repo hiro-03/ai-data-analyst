@@ -1,10 +1,10 @@
 """
-Tests for the fishing inference Lambda.
+釣り推論 Lambda のテスト。
 
-Coverage targets:
-- _invoke_agentcore: valid JSON response, non-JSON response, Bedrock ClientError
-- _emit_score_metric: CloudWatch error is logged (non-fatal, non-blocking)
-- lambda_handler: mock-provider path, bedrock-agentcore path
+カバレッジ対象:
+- _invoke_agentcore: 正常 JSON、非 JSON、Bedrock ClientError
+- _emit_score_metric: CloudWatch エラーはログのみ（致命的でない・ブロックしない）
+- lambda_handler: mock プロバイダー経路、bedrock-agentcore 経路
 """
 import json
 import logging
@@ -17,11 +17,11 @@ _LAMBDA = "lambdas/fishing/infer"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers
+# ヘルパー
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_bedrock_response(text: str):
-    """Build a minimal invoke_agent response whose .completion is an iterable."""
+    """invoke_agent 応答の最小形。.completion がイテラブルになる。"""
     chunk = {"chunk": {"bytes": text.encode("utf-8")}}
     return {"completion": [chunk]}
 
@@ -49,7 +49,7 @@ def _minimal_facts():
 
 class TestInvokeAgentcore:
     """
-    Bedrock boundary: three scenarios defined by the original spec.
+    Bedrock 境界: 元仕様で定義された 3 シナリオ。
     """
 
     def _setup_env(self, monkeypatch, load_lambda):
@@ -58,9 +58,9 @@ class TestInvokeAgentcore:
         monkeypatch.setenv("INFERENCE_PROVIDER", "bedrock-agentcore")
         return load_lambda(_LAMBDA)
 
-    # ── Case 1: agent returns valid JSON ────────────────────────────────────
+    # ── ケース1: エージェントが有効な JSON を返す ────────────────────────────
     def test_valid_json_response_is_parsed(self, load_lambda, monkeypatch):
-        """When Bedrock returns well-formed JSON, _invoke_agentcore returns a dict."""
+        """Bedrock が整った JSON を返すとき、_invoke_agentcore は dict を返す。"""
         lf = self._setup_env(monkeypatch, load_lambda)
 
         expected = {
@@ -82,13 +82,12 @@ class TestInvokeAgentcore:
         assert result["score"]["value"] == 82
         assert result["best_windows"] == ["06:00–08:00"]
 
-    # ── Case 2: agent returns non-JSON text → ValueError → SFN FAILED ──────
+    # ── ケース2: 非 JSON テキスト → ValueError → SFN FAILED ────────────────
     def test_non_json_response_raises_value_error(self, load_lambda, monkeypatch):
         """
-        When agent output is not JSON, _invoke_agentcore must raise ValueError so
-        that Step Functions marks the execution FAILED and the Catch block can
-        handle it (retry, alert, etc.).  Silently returning a fallback would hide
-        prompt-drift issues and corrupt downstream consumers.
+        エージェント出力が JSON でないとき、_invoke_agentcore は ValueError を出し
+        Step Functions が実行を FAILED にし Catch で処理できるようにする。
+        黙ってフォールバックを返すとプロンプトずれが隠れ、下流が壊れる。
         """
         lf = self._setup_env(monkeypatch, load_lambda)
 
@@ -99,18 +98,17 @@ class TestInvokeAgentcore:
             with pytest.raises(ValueError, match="non-JSON"):
                 lf._invoke_agentcore(_minimal_facts(), _make_context())
 
-    # ── Case 2b: agent returns JSON that fails schema validation ─────────────
+    # ── ケース2b: JSON だがスキーマ検証に失敗 ────────────────────────────────
     def test_schema_invalid_json_raises_validation_error(self, load_lambda, monkeypatch):
         """
-        When Bedrock returns JSON but it violates FishingAdviceResponse (e.g.
-        score.value out of range), Pydantic ValidationError must propagate so
-        the Step Function marks execution FAILED – not pass silently.
+        Bedrock が JSON を返しても FishingAdviceResponse に違反する場合（例: score.value が範囲外）、
+        Pydantic の ValidationError を伝播させ Step Function を FAILED にする。黙って通さない。
         """
         import pydantic
 
         lf = self._setup_env(monkeypatch, load_lambda)
 
-        # score.value = 999 is outside [0, 100]
+        # score.value = 999 は [0, 100] の範囲外
         bad_response = {
             "summary": "ok",
             "score": {"value": 999, "label": "broken"},
@@ -125,9 +123,9 @@ class TestInvokeAgentcore:
             with pytest.raises(pydantic.ValidationError):
                 lf._invoke_agentcore(_minimal_facts(), _make_context())
 
-    # ── Case 3: Bedrock raises ClientError ──────────────────────────────────
+    # ── ケース3: Bedrock が ClientError ────────────────────────────────────
     def test_bedrock_client_error_propagates(self, load_lambda, monkeypatch):
-        """ClientError from invoke_agent must propagate so the Step Function marks FAILED."""
+        """invoke_agent の ClientError は伝播し、Step Function が FAILED にする。"""
         lf = self._setup_env(monkeypatch, load_lambda)
 
         error_response = {
@@ -142,9 +140,9 @@ class TestInvokeAgentcore:
 
         assert exc_info.value.response["Error"]["Code"] == "ServiceQuotaExceededException"
 
-    # ── Missing env vars ────────────────────────────────────────────────────
+    # ── 環境変数欠落 ────────────────────────────────────────────────────────
     def test_missing_agent_id_raises_runtime_error(self, load_lambda, monkeypatch):
-        """RuntimeError is raised when BEDROCK_AGENT_ID is absent."""
+        """BEDROCK_AGENT_ID が無いとき RuntimeError。"""
         monkeypatch.delenv("BEDROCK_AGENT_ID", raising=False)
         monkeypatch.delenv("BEDROCK_AGENT_ALIAS_ID", raising=False)
         lf = load_lambda(_LAMBDA)
@@ -159,7 +157,7 @@ class TestInvokeAgentcore:
 
 class TestEmitScoreMetric:
     """
-    CloudWatch boundary: metric emission must be non-blocking and non-silent.
+    CloudWatch 境界: メトリクス送信はブロックせず、失敗も黙殺しない。
     """
 
     def _load(self, load_lambda, monkeypatch):
@@ -167,9 +165,9 @@ class TestEmitScoreMetric:
         monkeypatch.setenv("BEDROCK_AGENT_ALIAS_ID", "ALIASID01")
         return load_lambda(_LAMBDA)
 
-    # ── Happy path ──────────────────────────────────────────────────────────
+    # ── 正常系 ──────────────────────────────────────────────────────────────
     def test_happy_path_calls_put_metric_data(self, load_lambda, monkeypatch):
-        """put_metric_data is invoked with the correct namespace and value."""
+        """put_metric_data が正しい Namespace と値で呼ばれる。"""
         lf = self._load(load_lambda, monkeypatch)
 
         with patch.object(lf, "_cloudwatch") as mock_cw:
@@ -182,9 +180,9 @@ class TestEmitScoreMetric:
         assert metric["MetricName"] == "AdviceScore"
         assert metric["Value"] == 75.0
 
-    # ── Non-numeric score is silently skipped ───────────────────────────────
+    # ── 数値でない score はスキップ ─────────────────────────────────────────
     def test_non_numeric_score_skips_metric(self, load_lambda, monkeypatch):
-        """If score.value is not a number, put_metric_data must NOT be called."""
+        """score.value が数値でないとき put_metric_data は呼ばれない。"""
         lf = self._load(load_lambda, monkeypatch)
 
         with patch.object(lf, "_cloudwatch") as mock_cw:
@@ -192,12 +190,12 @@ class TestEmitScoreMetric:
 
         mock_cw.put_metric_data.assert_not_called()
 
-    # ── CloudWatch error is logged, not re-raised ────────────────────────────
+    # ── CloudWatch エラーはログのみ、再送出しない ───────────────────────────
     def test_cloudwatch_error_is_logged_not_raised(self, load_lambda, monkeypatch, caplog):
         """
-        When CloudWatch raises an exception:
-        - _emit_score_metric must NOT raise (main thread stays alive).
-        - A WARNING log entry must be emitted (error is not silently swallowed).
+        CloudWatch が例外を出したとき:
+        - _emit_score_metric は再送出しない（メインスレッドは継続）。
+        - WARNING ログが出る（黙って飲み込まない）。
         """
         lf = self._load(load_lambda, monkeypatch)
 
@@ -207,28 +205,28 @@ class TestEmitScoreMetric:
         with patch.object(lf, "_cloudwatch") as mock_cw:
             mock_cw.put_metric_data.side_effect = exc
             with caplog.at_level(logging.WARNING):
-                # Must NOT raise
+                # 再送出してはならない
                 lf._emit_score_metric({"score": {"value": 60}})
 
         assert any("AdviceScore" in r.message or "metric" in r.message.lower() for r in caplog.records), \
-            "Expected a warning log mentioning the metric failure"
+            "メトリクス失敗を示す WARNING ログが期待される"
 
-    # ── Missing score key is silently skipped ───────────────────────────────
+    # ── score キー欠落はスキップ ───────────────────────────────────────────
     def test_missing_score_key_skips_metric(self, load_lambda, monkeypatch):
         lf = self._load(load_lambda, monkeypatch)
 
         with patch.object(lf, "_cloudwatch") as mock_cw:
-            lf._emit_score_metric({})  # no "score" key
+            lf._emit_score_metric({})  # "score" キーなし
 
         mock_cw.put_metric_data.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# lambda_handler (smoke tests)
+# lambda_handler（スモーク）
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLambdaHandlerPaths:
-    """End-to-end smoke tests through lambda_handler."""
+    """lambda_handler 経由のエンドツーエンドスモーク。"""
 
     def _mock_event(self):
         return {
@@ -238,7 +236,7 @@ class TestLambdaHandlerPaths:
         }
 
     def test_mock_provider_returns_200_without_bedrock(self, load_lambda, monkeypatch, lambda_context):
-        """INFERENCE_PROVIDER=mock must return 200 without calling Bedrock."""
+        """INFERENCE_PROVIDER=mock は Bedrock を呼ばず 200 を返す。"""
         monkeypatch.setenv("INFERENCE_PROVIDER", "mock")
         lf = load_lambda(_LAMBDA)
 
@@ -252,7 +250,7 @@ class TestLambdaHandlerPaths:
         assert body["score"]["label"] == "mock"
 
     def test_bedrock_provider_calls_invoke_agent(self, load_lambda, monkeypatch, lambda_context):
-        """INFERENCE_PROVIDER=bedrock-agentcore must delegate to _invoke_agentcore."""
+        """INFERENCE_PROVIDER=bedrock-agentcore は _invoke_agentcore に委譲。"""
         monkeypatch.setenv("INFERENCE_PROVIDER", "bedrock-agentcore")
         monkeypatch.setenv("BEDROCK_AGENT_ID", "AGENTID01")
         monkeypatch.setenv("BEDROCK_AGENT_ALIAS_ID", "ALIASID01")
