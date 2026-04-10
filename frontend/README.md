@@ -104,3 +104,7 @@ flutter analyze
 
 > **注意**: このアプリは AWS バックエンド（API Gateway + Lambda + Cognito）と  
 > 組み合わせて使用します。バックエンドのセットアップはルートの `README.md` を参照してください。
+>
+> **Flutter Web（`flutter run -d chrome`）**: ブラウザはクロスオリジン制限（CORS）のため、  
+> API 側で `OPTIONS /fishing` とレスポンスヘッダー `Access-Control-Allow-*` が必要です。  
+> 本リポジトリの `template.yaml` に CORS 設定を含めています。**デプロイ後**の API で動作確認してください。

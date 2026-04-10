@@ -44,13 +44,25 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
         body = _parse_body(event)
         request = FishingRequest.model_validate(body)
     except json.JSONDecodeError as e:
-        return json_response(400, {"trace_id": trace_id, "error": f"invalid JSON: {e}"})
+        return json_response(
+            400,
+            {"trace_id": trace_id, "error": f"invalid JSON: {e}"},
+            cors=True,
+        )
     except ValidationError as e:
-        return json_response(400, {"trace_id": trace_id, "error": "validation failed", "detail": e.errors()})
+        return json_response(
+            400,
+            {"trace_id": trace_id, "error": "validation failed", "detail": e.errors()},
+            cors=True,
+        )
 
     sm_arn = os.environ.get("FISHING_STATE_MACHINE_ARN")
     if not sm_arn:
-        return json_response(500, {"trace_id": trace_id, "error": "FISHING_STATE_MACHINE_ARN not set"})
+        return json_response(
+            500,
+            {"trace_id": trace_id, "error": "FISHING_STATE_MACHINE_ARN not set"},
+            cors=True,
+        )
 
     input_obj = {
         "lat": request.lat,
@@ -74,6 +86,7 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
         return json_response(
             http_status,
             {"trace_id": trace_id, "error": f"state machine {status}", "cause": cause},
+            cors=True,
         )
 
     output_raw: Optional[str] = resp.get("output")
@@ -84,8 +97,12 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
         if isinstance(payload, dict):
             payload.setdefault("trace_id", trace_id)
             payload["latency_ms"] = elapsed_ms
-            return json_response(200, payload)
+            return json_response(200, payload, cors=True)
     except Exception:
         pass
 
-    return json_response(200, {"trace_id": trace_id, "latency_ms": elapsed_ms, "raw_output": output_raw})
+    return json_response(
+        200,
+        {"trace_id": trace_id, "latency_ms": elapsed_ms, "raw_output": output_raw},
+        cors=True,
+    )

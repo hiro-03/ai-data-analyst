@@ -36,9 +36,26 @@ def unwrap_lambda_proxy(obj: Any) -> Any:
     return obj
 
 
-def json_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+def json_response(
+    status_code: int,
+    body: Dict[str, Any],
+    *,
+    cors: bool = False,
+) -> Dict[str, Any]:
+    """
+    API Gateway プロキシ形式のレスポンスを返す。
+
+    cors=True のときはブラウザ（Flutter Web 等）からのクロスオリジン呼び出し向けに
+    Access-Control-* ヘッダーを付与する。Step Functions から直接呼ぶ Lambda では False のまま。
+    """
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if cors:
+        # ブラウザの preflight（OPTIONS）後の本レスポンスでも CORS を返す必要がある。
+        headers["Access-Control-Allow-Origin"] = "*"
+        headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+        headers["Access-Control-Allow-Methods"] = "POST,OPTIONS"
     return {
         "statusCode": status_code,
-        "headers": {"Content-Type": "application/json"},
+        "headers": headers,
         "body": json.dumps(body, ensure_ascii=False),
     }
