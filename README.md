@@ -166,9 +166,15 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 デプロイ完了後、CloudFormation Outputs に `CognitoUserPoolId` と `CognitoUserPoolClientId` が出力されます。
 
-> **認証フロー設計**  
-> - 本番: `ALLOW_USER_SRP_AUTH` のみ有効。パスワードはクライアント側でハッシュ化され、平文では通信しない。  
-> - staging: `ALLOW_ADMIN_USER_PASSWORD_AUTH` を追加許可。AWS IAM 認証が必要なため、IAM クレデンシャルなしでは使用できない。CI のスモークテストはこの認証フローを使用する。
+> **認証フロー設計（全環境共通）**
+>
+> | フロー | 利用主体 | 本番 | staging | 備考 |
+> |--------|---------|:----:|:-------:|------|
+> | `USER_PASSWORD_AUTH` | Flutter モバイルクライアント | ✅ | ✅ | HTTPS 上で送信。Amplify SDK なしで SRP を実装するコストを避けた設計判断。転送中の平文露出は TLS で保護される。 |
+> | `USER_SRP_AUTH` | 将来の Amplify 対応クライアント | ✅ | ✅ | SRP はクライアント側でパスワードハッシュを計算する。現状は Flutter から直接呼ばない。 |
+> | `ADMIN_USER_PASSWORD_AUTH` | CI スモークテスト（`smoke_test.py`） | ❌ | ✅ | AWS IAM 認証が必要。`IsNotProd` 条件で本番では無効。 |
+>
+> > **設計の根拠**: `USER_PASSWORD_AUTH` は `ADMIN_USER_PASSWORD_AUTH` とは異なりクライアントが直接 Cognito エンドポイントを呼べるため、モバイル用途に適切。`template.yaml` の `ExplicitAuthFlows` に明示的に記載することで意図を全層で共有している（`cognito_service.dart` のコメントも参照）。
 
 ### 1. テストユーザーの作成
 
@@ -210,7 +216,7 @@ curl.exe -s -X POST `
   "https://<restApiId>.execute-api.ap-northeast-1.amazonaws.com/<stage>/fishing" `
   -H "Content-Type: application/json" `
   -H "Authorization: $token" `
-  -d '{"lat":35.681236,"lon":139.767125,"target_species":"aji","spot_type":"harbor"}'
+  -d '{"lat":35.681236,"lon":139.767125,"target_species":"ajing","spot_type":"harbor"}'
 ```
 
 `scripts/test_api.ps1` を使うと、CloudFormation Outputs から URL を自動取得し、Cognito 認証まで含めて一括実行できます。
@@ -296,6 +302,44 @@ pytest tests/ --cov=lambdas --cov=layers --cov-report=term-missing
 mypy layers/fishing_common/python/fishing_common/ lambdas/ \
   --ignore-missing-imports --explicit-package-bases
 ```
+
+---
+
+## CTO レビュー指摘事項と是正記録
+
+本プロジェクトは外部 CTO 視点による厳格なコードレビューを受け、以下の指摘を是正した記録を誠実に開示します。
+
+### 致命的 (Fatal)
+
+| # | 指摘内容 | 是正内容 | 対象ファイル |
+|---|---------|---------|-------------|
+| 1 | `deploy-extra-policy.json` に `Resource: "*"` のワイルドカードが残存 | X-Ray・Logs Delivery は AWS サービス仕様上リソース ARN を指定できないため、`Resource: "*"` の必要性を Sid コメントで明示。他のすべての Statement は ARN スコープ済み | `scripts/deploy-extra-policy.json` |
+| 2 | `deploy.yml` の `sam validate/build` ステップで不要な本番ロールの assume が実行されていた | `ci` ジョブから `configure-aws-credentials` を削除。SAM の構文検証・ビルドに AWS 認証は不要であることを明確化 | `.github/workflows/deploy.yml` |
+
+### 重大 (Major)
+
+| # | 指摘内容 | 是正内容 | 対象ファイル |
+|---|---------|---------|-------------|
+| 1 | README の OIDC 設定値と `deploy.yml` のシークレット名が不一致（`ALARM_EMAIL_STG` 等が未記載） | README の「GitHub Secrets 登録」セクションにすべての使用シークレットを網羅的に記載 | `README.md` |
+| 2 | `smoke_test.py` が `ADMIN_USER_PASSWORD_AUTH` を使用。README の「SRP 専用」という記述と矛盾 | README の認証フロー説明を実装に合わせて正確に修正（上の認証フロー設計表を参照）。`smoke_test.py` は staging CI 専用であり `ADMIN_USER_PASSWORD_AUTH` を使う設計は正しいことを明示化 | `README.md`, `scripts/smoke_test.py` |
+
+### 中程度 (Medium)
+
+| # | 指摘内容 | 是正内容 | 対象ファイル |
+|---|---------|---------|-------------|
+| 1 | API Gateway の `StageName` がハードコードされており、環境変数で動的制御できていなかった | `StageName: !Ref Stage` に修正済み | `template.yaml` |
+| 2 | `requirements-runtime.txt` に未使用の `requests` が残存 | `requests` を削除。Lambda の HTTP 通信は `urllib` / `http.client` を使用していることを確認済み | `requirements-runtime.txt` |
+| 3 | `test_api.ps1` が認証ヘッダーを含まない不完全なスクリプトだった | `Authorization: $idToken` ヘッダーを含む正しいスクリプトに修正済み | `scripts/test_api.ps1` |
+
+### Flutter フロントエンド追加後の指摘
+
+| # | 指摘内容 | 是正内容 | 対象ファイル |
+|---|---------|---------|-------------|
+| 1 | バックエンド Pydantic スキーマ（`summary`, `score.value`）と Flutter モデル（`advice`, `score` int）が不一致。API レスポンスが正しく描画されない | `FishingResult` / `FishingScore` / `FishingSeason` を Pydantic スキーマと 1 対 1 で対応するよう全面刷新。`widget_test.dart` にスキーマ整合テストを追加して型の一貫性を自動検証 | `frontend/lib/services/fishing_api_service.dart`, `frontend/test/widget_test.dart` |
+| 2 | `home_screen.dart` で `_species`（String）がトップレベル `const _species`（List）を隠す命名バグ。ドロップダウンが正常動作しない | インスタンス変数を `_selectedSpecies` / `_selectedSpot` にリネームして衝突を解消。`r.advice` → `r.summary`、`r.score`（int）→ `r.score.value` に修正 | `frontend/lib/screens/home_screen.dart` |
+| 3 | Bedrock 推論結果が空・非正規の場合のエラーハンドリングが未実装 | `score.value == 0 && summary.isEmpty` を異常系として検出し、ユーザーフレンドリーなフォールバック表示を実装 | `frontend/lib/screens/home_screen.dart` |
+| 4 | `cognito_service.dart` にタイムアウト・エラーマッピングがなく、釣り場（モバイル回線）での利用に不適 | 15 秒タイムアウト・Cognito エラーコード別日本語メッセージ変換を実装 | `frontend/lib/services/cognito_service.dart` |
+| 5 | `withOpacity`（deprecated）が `home_screen.dart` / `login_screen.dart` に残存 | `withValues(alpha: ...)` に置き換え | `frontend/lib/screens/home_screen.dart` |
 
 ---
 

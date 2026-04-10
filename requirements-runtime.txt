@@ -1,1 +1,4 @@
-requests
+# Lambda ランタイム依存パッケージ。
+# Lambda Layer（layers/fishing_common/requirements.txt）に含まれないものをここに列挙する。
+# 現状、Lambda の HTTP 通信はすべて標準ライブラリ（urllib / http.client）を使用しており、
+# requests は不要なため削除済み。依存が増えた場合はここに追記すること。
