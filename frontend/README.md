@@ -10,14 +10,15 @@ AI 釣りアドバイザーのモバイルクライアント。
 ```
 frontend/
 ├── lib/
-│   ├── main.dart                    # エントリポイント・ルーティング
+│   ├── main.dart                    # エントリポイント・Amplify 初期化・ルーティング
 │   ├── config/
-│   │   └── app_config.dart          # Cognito / API URL 設定値
+│   │   ├── app_config.dart          # Cognito / API URL 設定値
+│   │   └── amplify_configuration.dart # Amplify（SRP）用 JSON 生成
 │   ├── screens/
 │   │   ├── login_screen.dart        # ログイン画面
 │   │   └── home_screen.dart         # 釣り場選択・結果表示画面
 │   └── services/
-│       ├── cognito_service.dart     # Cognito USER_PASSWORD_AUTH 認証
+│       ├── cognito_service.dart     # Amplify Auth（Cognito USER_SRP_AUTH / SRP）
 │       └── fishing_api_service.dart # 釣り推論 API クライアント
 └── test/
     └── widget_test.dart             # ウィジェットテスト + スキーマ整合テスト
@@ -97,8 +98,9 @@ flutter analyze
 
 ## 認証フロー
 
-`USER_PASSWORD_AUTH` を使用します。HTTPS（TLS 1.2 以上）上で送信されるため、  
-転送中の平文露出はありません。詳細は `lib/services/cognito_service.dart` のコメントを参照してください。
+**AWS Amplify Auth** を使用し、Cognito の **`USER_SRP_AUTH`（SRP）** でサインインする。  
+平文パスワードを `InitiateAuth` に載せない。設定は `lib/config/amplify_configuration.dart`、  
+サインイン処理は `lib/services/cognito_service.dart` を参照。
 
 > **注意**: このアプリは AWS バックエンド（API Gateway + Lambda + Cognito）と  
 > 組み合わせて使用します。バックエンドのセットアップはルートの `README.md` を参照してください。

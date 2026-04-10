@@ -25,6 +25,8 @@ dependencies:
   http: ^1.2.2
   flutter_map: ^7.0.2
   latlong2: ^0.9.0
+  amplify_flutter: ^2.6.3
+  amplify_auth_cognito: ^2.6.3
 
 dev_dependencies:
   flutter_test:

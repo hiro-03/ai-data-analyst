@@ -1,6 +1,6 @@
 {
   "Version": "2012-10-17",
-  "Comment": "Inline policy attached to github-actions-ai-data-analyst role. Supplements managed policies to stay within the 10-policy limit. Each statement is scoped to this project's resource ARN patterns where the service supports resource-level permissions. Statements requiring Resource:* are annotated with the AWS constraint that forces it.",
+  "Comment": "GitHub Actions デプロイロール用インラインポリシー（マネージドポリシー数上限対策）。各 Statement はアカウント 476963918877・リージョン ap-northeast-1 の本プロジェクト ARN にスコープする。以前 X-Ray 送信・Logs 配信 API 用に Resource:* があったが、sam deploy / CloudFormation 更新に当該権限は不要なため削除済み（最小権限）。",
   "Statement": [
     {
       "Sid": "SSMParameterRead",
@@ -78,18 +78,6 @@
       ]
     },
     {
-      "Sid": "XRayTracingAllResources",
-      "Effect": "Allow",
-      "Action": [
-        "xray:PutTraceSegments",
-        "xray:PutTelemetryRecords",
-        "xray:GetSamplingRules",
-        "xray:GetSamplingTargets",
-        "xray:GetSamplingStatisticSummaries"
-      ],
-      "Resource": "*"
-    },
-    {
       "Sid": "LogGroupsScopedWrite",
       "Effect": "Allow",
       "Action": [
@@ -109,21 +97,6 @@
         "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/apigateway/ai-data-analyst-fishing*",
         "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/stepfunctions/ai-data-analyst-fishing*"
       ]
-    },
-    {
-      "Sid": "LogsDeliveryAndResourcePolicyAllResources",
-      "Effect": "Allow",
-      "Action": [
-        "logs:CreateLogDelivery",
-        "logs:DeleteLogDelivery",
-        "logs:GetLogDelivery",
-        "logs:UpdateLogDelivery",
-        "logs:ListLogDeliveries",
-        "logs:PutResourcePolicy",
-        "logs:DescribeResourcePolicies",
-        "logs:DescribeLogGroups"
-      ],
-      "Resource": "*"
     },
     {
       "Sid": "BedrockAgentReadOnly",

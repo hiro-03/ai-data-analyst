@@ -48,14 +48,14 @@ Lambda：API プロキシ
 
 ## セキュリティ設計方針
 
-- **最小権限の原則**: GitHub Actions 用デプロイロールの IAM ポリシーでは、各リソースをプロジェクト名プレフィックス（`ai-data-analyst-fishing*`）で **範囲を限定**しています。`Resource: "*"` が残る箇所（X-Ray・ログ配信 API など）は AWS 側の仕様上やむをえないため、`scripts/deploy-extra-policy.json` のコメントで理由を記載しています。
+- **最小権限の原則**: GitHub Actions 用デプロイロール（`scripts/deploy-extra-policy.json`）は **すべての Statement でリソース ARN を明示**し、`Resource: "*"` は使用していません。Lambda 推論ロールの `cloudwatch:PutMetricData` のみ、AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件の組み合わせが必要（カスタムメトリクスはリソース ARN を指定できない）です。
 - **OIDC 認証**: 長期の IAM アクセスキーを置かず、GitHub Actions から一時クレデンシャルで AWS を操作します。ロールは stg（`AWS_ROLE_ARN_STG`）と prod（`AWS_ROLE_ARN_PROD`）で分けています。
 - **環境分離**: `Stage` パラメータ（`stg` / `prod`）により、DynamoDB の削除保護、Cognito の認証フロー、Step Functions の実行データのログ記録の有無、API Gateway のステージ名、CloudWatch アラームのディメンションなどを **環境ごとに切り替え**ます。
 - **Pydantic バリデーション**: API の入口（リクエスト）と推論の出口（Bedrock レスポンス）の **両方**でスキーマ検証します。Bedrock が非 JSON や範囲外の値を返した場合は `ValidationError` とし、Step Functions の実行は `FAILED` になります。推論結果の **見かけ上の成功による品質劣化**を防ぎます。
 - **Cognito 強化設定**:
   - `AllowAdminCreateUserOnly: true`（自己登録禁止）
   - `PreventUserExistenceErrors: ENABLED`（ユーザー列挙攻撃の抑止）
-  - `ALLOW_ADMIN_USER_PASSWORD_AUTH` は staging 環境のみ有効（`IsNotProd` 条件）。本番は SRP 専用。
+  - `ALLOW_ADMIN_USER_PASSWORD_AUTH` は staging のみ（`IsNotProd`）。**モバイルアプリは Amplify Auth による `USER_SRP_AUTH`（SRP）**。
 
 ---
 
@@ -104,17 +104,30 @@ aws iam create-open-id-connect-provider \
 #    - trust policy: scripts/github-actions-trust-policy.json
 #    - 追加 inline ポリシー: scripts/deploy-extra-policy.json
 
-# 3. GitHub リポジトリの Secrets に以下を登録
-#    AWS_ROLE_ARN_STG  = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
-#    AWS_ROLE_ARN_PROD = arn:aws:iam::<ACCOUNT_ID>:role/github-actions-ai-data-analyst
-#    ALARM_EMAIL       = 通知先メールアドレス
+# 3. GitHub Secrets（下表と deploy.yml の参照名を 1 文字もずらさないこと）
+#    本ワークフローは AWS Secrets Manager を直接参照しません（パラメータは GitHub Secrets のみ）。
 
 # 4. GitHub Environments を設定
 #    Settings → Environments → staging
-#      Secrets: STG_SMOKE_USER_EMAIL / STG_SMOKE_USER_PASSWORD
+#      Required reviewers: 任意（自動デプロイのままでも可）
 #    Settings → Environments → production
 #      Required reviewers: 承認者を追加（手動承認ゲート）
 ```
+
+#### GitHub Secrets 管理表（`.github/workflows/deploy.yml` と完全一致）
+
+変数名は **リポジトリ Secrets** と **Environment Secrets** のどちらでもよい（同名なら Environment が優先）。**AWS Secrets Manager は本パイプラインでは未使用**です。
+
+| Secret 名 | 必須 | 用途 | `deploy.yml` 内の参照 |
+|-----------|:----:|------|------------------------|
+| `AWS_ROLE_ARN_STG` | ✅ | OIDC で引き受けるステージング用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_STG` |
+| `AWS_ROLE_ARN_PROD` | ✅ | 本番デプロイ用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_PROD` |
+| `ALARM_EMAIL_STG` | 任意 | stg のアラーム通知メール（未設定時はワークフロー内の既定値） | `secrets.ALARM_EMAIL_STG` |
+| `BEDROCK_AGENT_ARN_STG` | 任意 | stg の Bedrock エージェント ARN（未設定時はワークフロー内の既定プレースホルダ） | `secrets.BEDROCK_AGENT_ARN_STG` |
+| `STG_SMOKE_USER_EMAIL` | ✅（E2E ゲート利用時） | stg スモークテスト用 Cognito ユーザー名 | `secrets.STG_SMOKE_USER_EMAIL` |
+| `STG_SMOKE_USER_PASSWORD` | ✅（E2E ゲート利用時） | 上記ユーザーのパスワード | `secrets.STG_SMOKE_USER_PASSWORD` |
+| `ALARM_EMAIL` | 任意 | 本番アラーム通知メール | `secrets.ALARM_EMAIL` |
+| `BEDROCK_AGENT_ARN` | 任意 | 本番 Bedrock エージェント ARN | `secrets.BEDROCK_AGENT_ARN` |
 
 ### ローカルからの手動デプロイ
 
@@ -166,15 +179,14 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 デプロイ完了後、CloudFormation Outputs に `CognitoUserPoolId` と `CognitoUserPoolClientId` が出力されます。
 
-> **認証フロー設計（全環境共通）**
+> **認証フロー設計（ドキュメント・IaC・実装の三位一体）**
 >
 > | フロー | 利用主体 | 本番 | staging | 備考 |
 > |--------|---------|:----:|:-------:|------|
-> | `USER_PASSWORD_AUTH` | Flutter モバイルクライアント | ✅ | ✅ | HTTPS 上で送信。Amplify SDK なしで SRP を実装するコストを避けた設計判断。転送中の平文露出は TLS で保護される。 |
-> | `USER_SRP_AUTH` | 将来の Amplify 対応クライアント | ✅ | ✅ | SRP はクライアント側でパスワードハッシュを計算する。現状は Flutter から直接呼ばない。 |
-> | `ADMIN_USER_PASSWORD_AUTH` | CI スモークテスト（`smoke_test.py`） | ❌ | ✅ | AWS IAM 認証が必要。`IsNotProd` 条件で本番では無効。 |
+> | **`USER_SRP_AUTH`（SRP）** | **Flutter（Amplify Auth）** | ✅ | ✅ | 平文パスワードをネットワークに載せない。`frontend/lib/main.dart` で Amplify 初期化、`cognito_service.dart` は `Amplify.Auth.signIn`（既定が SRP）。 |
+> | `ADMIN_USER_PASSWORD_AUTH` | CI の `scripts/smoke_test.py` のみ | ❌ | ✅ | 呼び出しに **AWS IAM** が必要。ユーザープールクライアントでは stg のみ `ExplicitAuthFlows` に含める。 |
 >
-> > **設計の根拠**: `USER_PASSWORD_AUTH` は `ADMIN_USER_PASSWORD_AUTH` とは異なりクライアントが直接 Cognito エンドポイントを呼べるため、モバイル用途に適切。`template.yaml` の `ExplicitAuthFlows` に明示的に記載することで意図を全層で共有している（`cognito_service.dart` のコメントも参照）。
+> > **補足**: `ALLOW_USER_PASSWORD_AUTH` はユーザープールクライアントから **無効化**済み（平文パスワードを `InitiateAuth` に載せる経路を閉じる）。CLI や CI からの検証は上記 ADMIN フローまたは `aws cognito-idp admin-initiate-auth` を使用する。
 
 ### 1. テストユーザーの作成
 
@@ -216,7 +228,7 @@ curl.exe -s -X POST `
   "https://<restApiId>.execute-api.ap-northeast-1.amazonaws.com/<stage>/fishing" `
   -H "Content-Type: application/json" `
   -H "Authorization: $token" `
-  -d '{"lat":35.681236,"lon":139.767125,"target_species":"ajing","spot_type":"harbor"}'
+  -d '{"lat":35.681236,"lon":139.767125,"target_species":"aji","spot_type":"harbor"}'
 ```
 
 `scripts/test_api.ps1` を使うと、CloudFormation Outputs から URL を自動取得し、Cognito 認証まで含めて一括実行できます。
@@ -305,6 +317,23 @@ mypy layers/fishing_common/python/fishing_common/ lambdas/ \
 
 ---
 
+## 最終是正完了報告（CTO への回答）
+
+最終ゲートで指摘された **3 点**について、コードとドキュメントで次のとおり完了した。
+
+1. **IAM の厳格化**  
+   `scripts/deploy-extra-policy.json` から `Resource: "*"` を付与していた Statement（旧 X-Ray・Logs 配信 API 用）を **削除**した。GitHub ロールの `sam deploy` では当該 API を直接呼ぶ必要がなく、**プロジェクトプレフィックス付き ARN のみ**で最小権限を維持する。  
+   併せて `template.yaml` の Step Functions 実行ロールでは、ログ配信権限の `Resource` を **`SfnLogGroup` の ARN と `${LogGroupArn}:*`（ログストリーム配下）** に限定した。  
+   なお `FishingInferenceLambda` の `cloudwatch:PutMetricData` は **AWS 仕様上 `Resource: "*"` + `cloudwatch:namespace` 条件**が推奨パターンのため残す（カスタムメトリクスにリソース ARN を指定できない）。
+
+2. **README と CI/CD の Secrets 完全同期**  
+   上記 **「GitHub Secrets 管理表」** を追加し、`.github/workflows/deploy.yml` が参照する `secrets.*` の名前と **1 対 1 で一致**させた。本パイプラインは **AWS Secrets Manager を使わず GitHub Secrets のみ**であることも明記した。
+
+3. **モバイル SRP 認証の整合**  
+   Flutter は **AWS Amplify Auth**（`amplify_flutter` / `amplify_auth_cognito`）を導入し、**`USER_SRP_AUTH`（SRP）** でサインインする。`template.yaml` の `CognitoUserPoolClient` から **`ALLOW_USER_PASSWORD_AUTH` を除去**し、平文パスワードを `InitiateAuth` に載せるクライアント経路を閉じた。CI の `scripts/smoke_test.py` は引き続き **`ADMIN_USER_PASSWORD_AUTH`**（IAM 必須）でトークン取得する別経路として文書化した。
+
+---
+
 ## CTO レビュー指摘事項と是正記録
 
 本プロジェクトは外部 CTO 視点による厳格なコードレビューを受け、以下の指摘を是正した記録を誠実に開示します。
@@ -313,7 +342,7 @@ mypy layers/fishing_common/python/fishing_common/ lambdas/ \
 
 | # | 指摘内容 | 是正内容 | 対象ファイル |
 |---|---------|---------|-------------|
-| 1 | `deploy-extra-policy.json` に `Resource: "*"` のワイルドカードが残存 | X-Ray・Logs Delivery は AWS サービス仕様上リソース ARN を指定できないため、`Resource: "*"` の必要性を Sid コメントで明示。他のすべての Statement は ARN スコープ済み | `scripts/deploy-extra-policy.json` |
+| 1 | `deploy-extra-policy.json` に `Resource: "*"` のワイルドカードが残存 | `Resource:*` を使う Statement を削除し、残りを ARN スコープに統一。Step Functions ロールのログ権限は `SfnLogGroup` に限定 | `scripts/deploy-extra-policy.json`, `template.yaml` |
 | 2 | `deploy.yml` の `sam validate/build` ステップで不要な本番ロールの assume が実行されていた | `ci` ジョブから `configure-aws-credentials` を削除。SAM の構文検証・ビルドに AWS 認証は不要であることを明確化 | `.github/workflows/deploy.yml` |
 
 ### 重大 (Major)
@@ -338,7 +367,7 @@ mypy layers/fishing_common/python/fishing_common/ lambdas/ \
 | 1 | バックエンド Pydantic スキーマ（`summary`, `score.value`）と Flutter モデル（`advice`, `score` int）が不一致。API レスポンスが正しく描画されない | `FishingResult` / `FishingScore` / `FishingSeason` を Pydantic スキーマと 1 対 1 で対応するよう全面刷新。`widget_test.dart` にスキーマ整合テストを追加して型の一貫性を自動検証 | `frontend/lib/services/fishing_api_service.dart`, `frontend/test/widget_test.dart` |
 | 2 | `home_screen.dart` で `_species`（String）がトップレベル `const _species`（List）を隠す命名バグ。ドロップダウンが正常動作しない | インスタンス変数を `_selectedSpecies` / `_selectedSpot` にリネームして衝突を解消。`r.advice` → `r.summary`、`r.score`（int）→ `r.score.value` に修正 | `frontend/lib/screens/home_screen.dart` |
 | 3 | Bedrock 推論結果が空・非正規の場合のエラーハンドリングが未実装 | `score.value == 0 && summary.isEmpty` を異常系として検出し、ユーザーフレンドリーなフォールバック表示を実装 | `frontend/lib/screens/home_screen.dart` |
-| 4 | `cognito_service.dart` にタイムアウト・エラーマッピングがなく、釣り場（モバイル回線）での利用に不適 | 15 秒タイムアウト・Cognito エラーコード別日本語メッセージ変換を実装 | `frontend/lib/services/cognito_service.dart` |
+| 4 | モバイルが `USER_PASSWORD_AUTH` で Cognito と不一致 | **Amplify Auth + SRP** に切替。`AuthException` を日本語メッセージにマッピング | `frontend/lib/services/cognito_service.dart`, `frontend/lib/main.dart`, `frontend/lib/config/amplify_configuration.dart` |
 | 5 | `withOpacity`（deprecated）が `home_screen.dart` / `login_screen.dart` に残存 | `withValues(alpha: ...)` に置き換え | `frontend/lib/screens/home_screen.dart` |
 
 ---
@@ -363,7 +392,7 @@ AI の提案をそのまま採用するのではなく、**あらかじめ品質
 
 | 観点 | このリポジトリでの具体例 |
 |------|-------------------------|
-| **セキュリティ** | IAM の最小権限・スコープ、`Resource: "*"` が残る箇所の文書化、GitHub Actions の **OIDC** による長期キー排除、Cognito／WAF／環境分離 |
+| **セキュリティ** | デプロイロール IAM の ARN スコープ、推論 Lambda の `PutMetricData` のみ AWS 仕様上の `*`＋条件、GitHub Actions **OIDC**、Cognito SRP（Amplify）／WAF／環境分離 |
 | **堅牢性** | Step Functions 上の **Catch とフォールバック**（部分障害でも推論継続）、外部 HTTP の **リトライ戦略**、CloudWatch **アラーム** による劣化検知 |
 | **データ品質** | **Pydantic** による API 入出力の検証。非 JSON やスキーマから外れた値を **黙って通さない** 設計 |
 

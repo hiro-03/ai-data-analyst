@@ -219,14 +219,10 @@ Resources:
       GenerateSecret: false
       PreventUserExistenceErrors: ENABLED
       ExplicitAuthFlows:
-        # SRP: クライアントがローカルでパスワードハッシュを計算。平文は送らない。
+        # SRP（Amplify Auth が InitiateAuth で USER_SRP_AUTH を使用）。平文パスワードはネットワークに載せない。
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-        # USER_PASSWORD_AUTH: Flutter モバイルクライアント向け。HTTPS 上で送信されるため
-        # 転送中の平文露出はなく、モバイル SDK での SRP 実装コストを回避できる。
-        - ALLOW_USER_PASSWORD_AUTH
-        # 管理者パスワードフロー（サーバへ平文パスワード）は stg のみ CLI 利便のため有効。
-        # 本番では攻撃面削減のため意図的に無効。運用は SRP またはフェデレーションを使用。
+        # 管理者パスワードフローは CI のスモークテスト（scripts/smoke_test.py）向け。stg のみ有効。
         - !If [IsNotProd, ALLOW_ADMIN_USER_PASSWORD_AUTH, !Ref AWS::NoValue]
 
   ########################################
@@ -401,6 +397,7 @@ Resources:
                   - !GetAtt GetMarineDataLambda.Arn
                   - !GetAtt GetForecastLambda.Arn
                   - !GetAtt FishingInferenceLambda.Arn
+              # Step Functions のログ配信先は SfnLogGroup のみに限定（Resource:* を廃止）。
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery
@@ -411,7 +408,11 @@ Resources:
                   - logs:PutResourcePolicy
                   - logs:DescribeResourcePolicies
                   - logs:DescribeLogGroups
-                Resource: "*"
+                Resource:
+                  - !GetAtt SfnLogGroup.Arn
+                  - !Sub
+                    - "${LogGroupArn}:*"
+                    - LogGroupArn: !GetAtt SfnLogGroup.Arn
 
   FishingAdviceStateMachine:
     Type: AWS::StepFunctions::StateMachine
