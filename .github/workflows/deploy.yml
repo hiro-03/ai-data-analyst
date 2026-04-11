@@ -149,6 +149,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
+              DeployTimestamp="${{ github.sha }}" \
               AlarmEmail="${{ secrets.ALARM_EMAIL_STG || 'stg-ops@example.com' }}" \
               BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
               Stage="stg"
@@ -250,6 +251,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
+              DeployTimestamp="${{ github.sha }}" \
               AlarmEmail="${{ secrets.ALARM_EMAIL || 'ops@example.com' }}" \
               BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
               Stage="prod"

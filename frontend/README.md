@@ -107,4 +107,5 @@ flutter analyze
 >
 > **Flutter Web（`flutter run -d chrome`）**: ブラウザはクロスオリジン制限（CORS）のため、  
 > API 側で `OPTIONS /fishing` とレスポンスヘッダー `Access-Control-Allow-*` が必要です。  
-> 本リポジトリの `template.yaml` に CORS 設定を含めています。**デプロイ後**の API で動作確認してください。
+> 本リポジトリの `template.yaml` に CORS 設定を含めています。  
+> **注意**: OpenAPI を変えたあと、API Gateway の **新しい Deployment** がステージに載らないと CORS が効きません。CI では `DeployTimestamp=${{ github.sha }}` を渡して毎回デプロイを更新しています。まだ `Failed to fetch` のときは **最新コミットのデプロイ完了後**に再試行するか、手動で `sam deploy --config-env stg` に `DeployTimestamp` をユニークな値で付与してください。

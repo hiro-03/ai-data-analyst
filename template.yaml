@@ -3,6 +3,9 @@ Transform: AWS::Serverless-2016-10-31
 Description: 気象 API + 釣りアドバイス API（Step Functions 同期実行 v2）
 
 Parameters:
+  # API Gateway の OpenAPI を変えたとき、Deployment を必ず差し替えるためのバージョン文字列。
+  # CI では github.sha を渡す。固定の "initial" のままだと RestApi は更新されても
+  # ステージが古い Deployment を指い続け、OPTIONS 追加などが反映されないことがある。
   DeployTimestamp:
     Type: String
     Default: "initial"
