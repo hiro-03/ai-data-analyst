@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../services/auth_session_storage.dart';
 import '../services/cognito_service.dart';
 import 'home_screen.dart';
 
@@ -28,6 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _emailCtrl.text.trim(),
         _passCtrl.text,
       );
+      await AuthSessionStorage.saveIdTokenIfApplicable(token);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => HomeScreen(idToken: token)),

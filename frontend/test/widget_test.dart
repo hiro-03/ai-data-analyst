@@ -17,6 +17,8 @@ void main() {
   group('アプリ基本表示テスト', () {
     testWidgets('ログイン画面のタイトルが表示される', (WidgetTester tester) async {
       await tester.pumpWidget(const FishingApp());
+      // AuthGate が非同期で初期ルートを解決するまで待つ
+      await tester.pumpAndSettle();
       expect(find.text('AI 釣りアドバイザー'), findsOneWidget);
     });
   });

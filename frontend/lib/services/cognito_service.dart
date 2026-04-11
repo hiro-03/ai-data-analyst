@@ -1,22 +1,40 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:http/http.dart' as http;
+
+import '../config/app_config.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 認証方針（SRP / Secure Remote Password）
+// 認証方針
 //
-// 本アプリは **AWS Amplify Auth** を用い、Cognito の **USER_SRP_AUTH** により
-// サインインする。パスワードの平文はネットワーク上に送信されず、
-// `template.yaml` の `ExplicitAuthFlows` も `ALLOW_USER_SRP_AUTH` に整合させている。
+// - **モバイル / デスクトップ**: Amplify Auth の既定フロー（USER_SRP_AUTH / SRP）。
+// - **Flutter Web × ステージング API**: ブラウザ環境では SRP 実装が失敗することがあるため、
+//   Cognito の **USER_PASSWORD_AUTH**（HTTPS 上の InitiateAuth）に切り替える。
+//   ステージングのユーザープールクライアントのみ `ALLOW_USER_PASSWORD_AUTH` を有効化している。
+// - **本番**（`AppConfig.fishingApiUrl` に `/stg/` が含まれないビルド）: Web でも SRP のみ。
 //
-// CI 向けスクリプト（scripts/smoke_test.py）は OIDC 付きロールから
-// **ADMIN_USER_PASSWORD_AUTH** を使う別経路であり、モバイルアプリの実装とは分離している。
+// CI の smoke_test.py は **ADMIN_USER_PASSWORD_AUTH**（別経路）。
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cognito（SRP）経由でサインインし、API Gateway 用の **ID トークン** を返す。
+/// Cognito でサインインし、API Gateway 用の **ID トークン** を返す。
 class CognitoService {
   /// ログイン。成功時は ID トークン文字列を返す。
   /// 失敗時は [CognitoAuthException] を throw する。
   Future<String> signIn(String username, String password) async {
+    if (_usePasswordAuthOnWeb) {
+      return _signInWithUserPasswordAuth(username, password);
+    }
+    return _signInWithAmplifySrp(username, password);
+  }
+
+  /// Web かつステージング API 向けビルドでは USER_PASSWORD_AUTH を使う。
+  bool get _usePasswordAuthOnWeb => AppConfig.usePasswordAuthOnWeb;
+
+  /// Amplify（USER_SRP_AUTH）。モバイル・デスクトップ、および本番 Web で使用。
+  Future<String> _signInWithAmplifySrp(String username, String password) async {
     try {
       final result = await Amplify.Auth.signIn(
         username: username,
@@ -40,6 +58,72 @@ class CognitoService {
     } catch (e) {
       throw CognitoAuthException('認証に失敗しました: $e');
     }
+  }
+
+  /// Cognito HTTP API（USER_PASSWORD_AUTH）。Flutter Web + stg 専用。
+  Future<String> _signInWithUserPasswordAuth(
+    String username,
+    String password,
+  ) async {
+    final endpoint = Uri.parse(
+      'https://cognito-idp.${AppConfig.cognitoRegion}.amazonaws.com/',
+    );
+    try {
+      final response = await http
+          .post(
+            endpoint,
+            headers: {
+              'Content-Type': 'application/x-amz-json-1.1',
+              'X-Amz-Target':
+                  'AWSCognitoIdentityProviderService.InitiateAuth',
+            },
+            body: jsonEncode({
+              'AuthFlow': 'USER_PASSWORD_AUTH',
+              'ClientId': AppConfig.cognitoClientId,
+              'AuthParameters': {
+                'USERNAME': username,
+                'PASSWORD': password,
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+
+      if (response.statusCode != 200) {
+        final msg = body['message'] as String? ?? 'Cognito エラー';
+        throw CognitoAuthException(_mapCognitoJsonError(msg, body));
+      }
+
+      final idToken =
+          body['AuthenticationResult']?['IdToken'] as String?;
+      if (idToken == null) {
+        throw CognitoAuthException('トークンを取得できませんでした');
+      }
+      return idToken;
+    } on TimeoutException {
+      throw CognitoAuthException(
+        '認証がタイムアウトしました。通信状況を確認してください。',
+      );
+    } on CognitoAuthException {
+      rethrow;
+    } catch (e) {
+      throw CognitoAuthException('認証に失敗しました: $e');
+    }
+  }
+
+  String _mapCognitoJsonError(String message, Map<String, dynamic> body) {
+    final t = body['__type'] as String? ?? '';
+    if (t.contains('NotAuthorized') ||
+        message.contains('Incorrect username or password')) {
+      return 'メールアドレスまたはパスワードが正しくありません';
+    }
+    if (t.contains('UserNotConfirmed')) {
+      return 'メールアドレスの確認が完了していません';
+    }
+    if (t.contains('TooManyRequests')) {
+      return 'リクエストが多すぎます。しばらくしてから再試行してください';
+    }
+    return message;
   }
 
   /// Amplify の例外メッセージをユーザー向け日本語に寄せる。

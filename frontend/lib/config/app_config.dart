@@ -1,7 +1,13 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 /// アプリ設定定数。
 /// 本番リリース時は環境変数や --dart-define で差し替えること。
 class AppConfig {
   AppConfig._();
+
+  /// Flutter Web かつステージング API 向けビルド（USER_PASSWORD_AUTH 分岐）。
+  static bool get usePasswordAuthOnWeb =>
+      kIsWeb && fishingApiUrl.contains('/stg/');
 
   // Amazon Cognito
   static const cognitoRegion = 'ap-northeast-1';
