@@ -55,7 +55,7 @@ Lambda：API プロキシ
 - **Cognito 強化設定**:
   - `AllowAdminCreateUserOnly: true`（自己登録禁止）
   - `PreventUserExistenceErrors: ENABLED`（ユーザー列挙攻撃の抑止）
-  - `ALLOW_ADMIN_USER_PASSWORD_AUTH` は staging のみ（`IsNotProd`）。**モバイルアプリは Amplify Auth による `USER_SRP_AUTH`（SRP）**。
+  - `ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は staging のみ（`IsNotProd`）。**モバイル・デスクトップは SRP**、**Flutter Web（stg）は開発利便のため `USER_PASSWORD_AUTH` 可**。
 
 ---
 
@@ -183,10 +183,11 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 >
 > | フロー | 利用主体 | 本番 | staging | 備考 |
 > |--------|---------|:----:|:-------:|------|
-> | **`USER_SRP_AUTH`（SRP）** | **Flutter（Amplify Auth）** | ✅ | ✅ | 平文パスワードをネットワークに載せない。`frontend/lib/main.dart` で Amplify 初期化、`cognito_service.dart` は `Amplify.Auth.signIn`（既定が SRP）。 |
-> | `ADMIN_USER_PASSWORD_AUTH` | CI の `scripts/smoke_test.py` のみ | ❌ | ✅ | 呼び出しに **AWS IAM** が必要。ユーザープールクライアントでは stg のみ `ExplicitAuthFlows` に含める。 |
+> | **`USER_SRP_AUTH`（SRP）** | **Flutter モバイル・Windows（Amplify Auth）** | ✅ | ✅ | 平文パスワードをネットワークに載せない。 |
+> | **`USER_PASSWORD_AUTH`** | **Flutter Web × stg**（ブラウザ向けフォールバック） | ❌ | ✅ | ブラウザでは SRP が不安定な場合があるため **ステージングのみ** HTTPS で許可。 |
+> | `ADMIN_USER_PASSWORD_AUTH` | CI の `scripts/smoke_test.py` のみ | ❌ | ✅ | **AWS IAM** が必要。 |
 >
-> > **補足**: `ALLOW_USER_PASSWORD_AUTH` はユーザープールクライアントから **無効化**済み（平文パスワードを `InitiateAuth` に載せる経路を閉じる）。CLI や CI からの検証は上記 ADMIN フローまたは `aws cognito-idp admin-initiate-auth` を使用する。
+> > **補足**: 本番のユーザープールクライアントには `USER_PASSWORD_AUTH` を含めない。CLI 検証は `admin-initiate-auth` または CI の ADMIN フローを使用する。
 
 ### 1. テストユーザーの作成
 
