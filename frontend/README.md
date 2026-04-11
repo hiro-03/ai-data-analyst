@@ -98,9 +98,11 @@ flutter analyze
 
 ## 認証フロー
 
-**AWS Amplify Auth** を使用し、Cognito の **`USER_SRP_AUTH`（SRP）** でサインインする。  
-平文パスワードを `InitiateAuth` に載せない。設定は `lib/config/amplify_configuration.dart`、  
-サインイン処理は `lib/services/cognito_service.dart` を参照。
+**通常（モバイル・Windows デスクトップ）**: **Amplify Auth** の **`USER_SRP_AUTH`（SRP）**。  
+**Flutter Web × ステージング**（`fishingApiUrl` に `/stg/` を含むビルド）: ブラウザ上で SRP が不安定な場合があるため、  
+Cognito の **`USER_PASSWORD_AUTH`（HTTPS 上の InitiateAuth）** に切り替える。  
+`template.yaml` のユーザープールクライアントは **stg のみ** `ALLOW_USER_PASSWORD_AUTH` を有効化している。  
+設定・分岐は `lib/services/cognito_service.dart` を参照。
 
 > **注意**: このアプリは AWS バックエンド（API Gateway + Lambda + Cognito）と  
 > 組み合わせて使用します。バックエンドのセットアップはルートの `README.md` を参照してください。

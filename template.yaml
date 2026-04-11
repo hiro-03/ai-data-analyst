@@ -256,6 +256,8 @@ Resources:
         # SRP（Amplify Auth が InitiateAuth で USER_SRP_AUTH を使用）。平文パスワードはネットワークに載せない。
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+        # Flutter Web はブラウザ上で SRP が不安定なことがあるため、stg のみ USER_PASSWORD_AUTH を許可（HTTPS）。
+        - !If [IsNotProd, ALLOW_USER_PASSWORD_AUTH, !Ref AWS::NoValue]
         # 管理者パスワードフローは CI のスモークテスト（scripts/smoke_test.py）向け。stg のみ有効。
         - !If [IsNotProd, ALLOW_ADMIN_USER_PASSWORD_AUTH, !Ref AWS::NoValue]
 
