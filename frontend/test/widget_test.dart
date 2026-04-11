@@ -40,6 +40,8 @@ void main() {
       'recommended_tactics': <String>['アジング', 'サビキ'],
       'risk_and_safety': <String>[],
       'evidence': <String>['風速 < 5m/s', '波高 < 0.5m'],
+      'depth_advice': '表層〜中層 2〜4m を中心に探るとよい条件です。',
+      'casting_advice': '堤防なら足元から竿先 10〜20m 先の潮目を意識。',
       'trace_id': 'abc12345-0000-0000-0000-000000000000',
       'latency_ms': 1234,
     };
@@ -65,6 +67,8 @@ void main() {
       expect(result.recommendedTactics, ['アジング', 'サビキ']);
       expect(result.riskAndSafety, isEmpty);
       expect(result.evidence, ['風速 < 5m/s', '波高 < 0.5m']);
+      expect(result.depthAdvice, '表層〜中層 2〜4m を中心に探るとよい条件です。');
+      expect(result.castingAdvice, '堤防なら足元から竿先 10〜20m 先の潮目を意識。');
 
       // API プロキシが付与するメタ情報
       expect(result.traceId, 'abc12345-0000-0000-0000-000000000000');
@@ -96,6 +100,8 @@ void main() {
         'recommended_tactics': <String>[],
         'risk_and_safety': <String>[],
         'evidence': <String>['これはプレースホルダーレスポンスです。'],
+        'depth_advice': '（モック）深さの例',
+        'casting_advice': '（モック）投げの例',
         'trace_id': 'mock-trace-id',
         'latency_ms': 100,
       };

@@ -4,9 +4,45 @@ import 'package:latlong2/latlong.dart';
 import '../services/fishing_api_service.dart';
 
 // 魚種コードと表示名の対応リスト。
-// バックエンドの FishingRequest.target_species が受け付ける値を使用する。
-const _speciesList = ['aji', 'iwashi', 'saba', 'buri', 'tai', 'kisu'];
-const _speciesJa = ['アジ', 'イワシ', 'サバ', 'ブリ', 'タイ', 'キス'];
+// バックエンドの FishingRequest.target_species が受け付ける値（任意の文字列可）。
+const _speciesList = [
+  'aji',
+  'iwashi',
+  'saba',
+  'buri',
+  'tai',
+  'kisu',
+  'mebaru',
+  'chinu',
+  'kurodai',
+  'hirame',
+  'suzuki',
+  'kasago',
+  'madai',
+  'souda',
+  'isaki',
+  'ika',
+  'tachiuo',
+];
+const _speciesJa = [
+  'アジ',
+  'イワシ',
+  'サバ',
+  'ブリ',
+  'タイ',
+  'キス',
+  'メバル',
+  'チヌ',
+  'クロダイ',
+  'ヒラメ',
+  'スズキ',
+  'カサゴ',
+  'マダイ',
+  'ソウダガツオ',
+  'イサキ',
+  'イカ',
+  'タチウオ',
+];
 
 // 釣り場種別コードと表示名の対応リスト。
 // バックエンドの FishingRequest.spot_type が受け付ける値を使用する。
@@ -327,6 +363,24 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: Colors.white, fontSize: 14, height: 1.6),
             ),
           ),
+          // 狙いの深さ・水層（バックエンド: depth_advice）
+          if (r.depthAdvice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _adviceSubCard(
+              icon: Icons.vertical_align_center,
+              title: '狙いの深さ・水層',
+              body: r.depthAdvice,
+            ),
+          ],
+          // 投げの目安（バックエンド: casting_advice）
+          if (r.castingAdvice.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _adviceSubCard(
+              icon: Icons.outbond,
+              title: '投げの目安',
+              body: r.castingAdvice,
+            ),
+          ],
           // 推奨釣り時間帯
           if (r.bestWindows.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -343,6 +397,47 @@ class _HomeScreenState extends State<HomeScreen> {
             _infoChips('⚠ リスク', r.riskAndSafety,
                 color: Colors.orangeAccent),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// 深さ・投げ幅などサブカード表示。
+  Widget _adviceSubCard({
+    required IconData icon,
+    required String title,
+    required String body,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2838),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF00BCD4).withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: const Color(0xFF00BCD4), size: 18),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF00BCD4),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            body,
+            style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+          ),
         ],
       ),
     );

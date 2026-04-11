@@ -42,5 +42,14 @@ class FishingAdviceResponse(BaseModel):
     recommended_tactics: List[Any] = []
     risk_and_safety: List[Any] = []
     evidence: List[Any] = []
+    # 実釣向けの短文（日本語）。潮・魚種・釣り場種別に応じて推論する。
+    depth_advice: str = Field(
+        default="",
+        description="狙う水層・深さの目安（例: 表層〜中層 2〜5m）",
+    )
+    casting_advice: str = Field(
+        default="",
+        description="投げの目安（堤防なら足元〜何 m 先など）。岸種別で変える。",
+    )
 
     model_config = {"extra": "ignore"}

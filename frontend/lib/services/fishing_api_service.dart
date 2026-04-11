@@ -26,6 +26,8 @@ import '../config/app_config.dart';
 //     "recommended_tactics":  [String],        // 推奨タクティクス
 //     "risk_and_safety":      [String],        // リスク・安全情報
 //     "evidence":             [String],        // 判断根拠
+//     "depth_advice":         String,          // 狙う水層・深さの目安
+//     "casting_advice":       String,          // 投げの目安（堤防など）
 //     // 以下は API プロキシ Lambda が付与するメタ情報
 //     "trace_id":             String (UUID),
 //     "latency_ms":           int
@@ -87,6 +89,8 @@ class FishingResult {
     required this.recommendedTactics,
     required this.riskAndSafety,
     required this.evidence,
+    required this.depthAdvice,
+    required this.castingAdvice,
     required this.traceId,
     required this.latencyMs,
   });
@@ -111,6 +115,12 @@ class FishingResult {
 
   /// 判断根拠。バックエンド: `evidence`。
   final List<String> evidence;
+
+  /// 狙う水層・深さの目安。バックエンド: `depth_advice`。
+  final String depthAdvice;
+
+  /// 投げの目安（堤防の距離感など）。バックエンド: `casting_advice`。
+  final String castingAdvice;
 
   /// エンドツーエンド追跡 ID（API プロキシが付与）。バックエンド: `trace_id`。
   final String traceId;
@@ -139,6 +149,8 @@ class FishingResult {
       recommendedTactics: toStringList(json['recommended_tactics']),
       riskAndSafety: toStringList(json['risk_and_safety']),
       evidence: toStringList(json['evidence']),
+      depthAdvice: json['depth_advice'] as String? ?? '',
+      castingAdvice: json['casting_advice'] as String? ?? '',
       traceId: json['trace_id'] as String? ?? '',
       latencyMs: json['latency_ms'] as int? ?? 0,
     );

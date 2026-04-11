@@ -89,13 +89,16 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "summary": "string",
             "score": {"value": "0-100", "label": "string"},
             "season": {"month": "1-12", "label": "winter|spring|summer|autumn"},
-            "best_windows": "array",
-            "recommended_tactics": "array",
-            "risk_and_safety": "array",
-            "evidence": "array",
+            "best_windows": "array of strings",
+            "recommended_tactics": "array of strings",
+            "risk_and_safety": "array of strings",
+            "evidence": "array of strings",
+            "depth_advice": "string (Japanese): 狙う水層・深さの目安。不明なら短く不確実性を書く。",
+            "casting_advice": "string (Japanese): 投げの目安。堤防なら足元〜何m先など。spot_typeに応じる。",
         },
         "rules": [
-            "Return JSON only. No markdown. No extra keys.",
+            "Return JSON only. No markdown. Keys must match output_schema exactly.",
+            "depth_advice と casting_advice は必ず日本語で1〜3文。facts.intent.spot_type（harbor/beach等）に合わせる。",
             "If some data is missing, reflect uncertainty in evidence.",
         ],
     }
@@ -170,6 +173,8 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
             recommended_tactics=[],
             risk_and_safety=[],
             evidence=["これはプレースホルダーレスポンスです。"],
+            depth_advice="（モック）対象魚の回遊に合わせ、表層〜中層を中心に探るとよい例です。実際の潮・透明度で調整してください。",
+            casting_advice="（モック）堤防なら足元〜竿15m程度先をイメージ。砂浜ならサーフ奥の砂筋、磯なら淵付近。風向・潮流で前後します。",
         ).model_dump()
     else:
         response = _invoke_agentcore(facts, context)

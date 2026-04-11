@@ -248,6 +248,8 @@ class TestLambdaHandlerPaths:
         assert resp["statusCode"] == 200
         body = __import__("json").loads(resp["body"])
         assert body["score"]["label"] == "mock"
+        assert "depth_advice" in body and body["depth_advice"]
+        assert "casting_advice" in body and body["casting_advice"]
 
     def test_bedrock_provider_calls_invoke_agent(self, load_lambda, monkeypatch, lambda_context):
         """INFERENCE_PROVIDER=bedrock-agentcore は _invoke_agentcore に委譲。"""
@@ -261,6 +263,8 @@ class TestLambdaHandlerPaths:
             "season": {"month": 6, "label": "summer"},
             "best_windows": [], "recommended_tactics": [],
             "risk_and_safety": [], "evidence": [],
+            "depth_advice": "mid layer",
+            "casting_advice": "30m",
         }
         bedrock_resp = _make_bedrock_response(json.dumps(advice))
 
