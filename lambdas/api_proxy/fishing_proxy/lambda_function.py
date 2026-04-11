@@ -19,6 +19,25 @@ from pydantic import ValidationError
 from fishing_common.lambda_utils import json_response, unwrap_lambda_proxy
 from fishing_common.schemas import FishingRequest
 
+
+def _extract_advice_dict(unwrapped: Any) -> Optional[Dict[str, Any]]:
+    """
+    Step Functions の最終出力は Lambda invoke のメタデータ付きオブジェクトになることがある。
+    unwrap_lambda_proxy 後も summary がルートに無く Payload 配下だけにあるため、
+    クライアント向け JSON では推論結果 dict へ正規化する。
+    """
+    if not isinstance(unwrapped, dict):
+        return None
+    score = unwrapped.get("score")
+    if isinstance(unwrapped.get("summary"), str) and isinstance(score, dict):
+        return unwrapped
+    nested = unwrapped.get("Payload")
+    if isinstance(nested, dict):
+        sc = nested.get("score")
+        if isinstance(nested.get("summary"), str) and isinstance(sc, dict):
+            return nested
+    return None
+
 # モジュールレベルでクライアントを生成：ウォームスタート時に再利用してレイテンシを削減。
 _sfn = boto3.client("stepfunctions")
 
@@ -93,7 +112,9 @@ def lambda_handler(event: Any, context: Any) -> Dict[str, Any]:
     try:
         output_obj = json.loads(output_raw) if output_raw else {}
         payload = unwrap_lambda_proxy(output_obj)
-
+        advice = _extract_advice_dict(payload)
+        if advice is not None:
+            payload = advice
         if isinstance(payload, dict):
             payload.setdefault("trace_id", trace_id)
             payload["latency_ms"] = elapsed_ms

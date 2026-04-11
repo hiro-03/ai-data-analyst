@@ -125,6 +125,37 @@ class TestFishingProxyInputValidation:
         assert captured.get("target_species") == "aji"
         assert captured.get("spot_type") == "harbor"
 
+    def test_sfn_lambda_invoke_envelope_flattens_to_advice_json(self, load_lambda, monkeypatch, lambda_context):
+        """
+        Step Functions の lambda:invoke 結果はメタデータ付きで、unwrap 後も summary が
+        Payload 配下に残る。クライアント向けレスポンスではルートに summary/score を載せる。
+        """
+        advice = {
+            "summary": "モック推論",
+            "score": {"value": 50, "label": "mock"},
+            "season": {"month": 4, "label": "spring"},
+            "best_windows": [],
+            "recommended_tactics": [],
+            "risk_and_safety": [],
+            "evidence": [],
+        }
+        invoke_like = {
+            "ExecutedVersion": "$LATEST",
+            "Payload": {
+                "statusCode": 200,
+                "body": json.dumps(advice, ensure_ascii=False),
+            },
+            "StatusCode": 200,
+        }
+        lf = self._lf(load_lambda, monkeypatch)
+        with patch.object(lf, "_sfn", _FakeSfnClient(_sfn_ok(invoke_like))):
+            resp = lf.lambda_handler(_event({"lat": 35.0, "lon": 139.0}), lambda_context)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["summary"] == "モック推論"
+        assert body["score"]["value"] == 50
+        assert "trace_id" in body
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step Functions ステータス処理
