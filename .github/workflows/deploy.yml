@@ -45,6 +45,10 @@ permissions:
   contents: read
   actions: read     # environment-protected ジョブからのアーティファクト参照に必要
 
+# 連続 push で複数ワークフローが同じ CloudFormation スタックへ sam deploy すると、
+# 一方の ChangeSet が OBSOLETE になり ExecuteChangeSet が失敗することがある。
+# デプロイジョブのみ concurrency で直列化し、CI（ci ジョブ）は並列のままとする。
+
 # ------------------------------------------------------------------------------
 # ジョブ 1 - CI ゲート: 単体テスト + リント + ビルド
 # main へのプッシュのたびに実行（デプロイ先に依存しない）
@@ -108,6 +112,9 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     environment: staging
+    concurrency:
+      group: sam-deploy-stg-${{ github.repository }}
+      cancel-in-progress: false
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'stg' || github.event.inputs.environment == 'both'))
@@ -210,6 +217,9 @@ jobs:
     needs: smoke-test-stg
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: sam-deploy-prod-${{ github.repository }}
+      cancel-in-progress: false
     if: |
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'prod' || github.event.inputs.environment == 'both'))
