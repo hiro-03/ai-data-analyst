@@ -103,6 +103,10 @@ jobs:
       - name: SAM build (検証のみ – デプロイジョブは別途ビルド)
         run: sam build
 
+      - name: Virtual CTO サマリー（手動チェックリストの可視化）
+        if: success()
+        run: python scripts/virtual_cto_gate.py --github-summary
+
 # ------------------------------------------------------------------------------
 # ジョブ 2 - ステージングへデプロイ
 # CI 成功後に自動実行。手動承認は不要。

@@ -1,5 +1,6 @@
 pytest
 pytest-cov
+pre-commit>=4.0,<5
 black
 flake8
 mypy

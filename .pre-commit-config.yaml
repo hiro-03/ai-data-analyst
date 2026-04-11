@@ -1,0 +1,13 @@
+# pre-commit: https://pre-commit.com
+# セットアップ: pip install -r requirements-dev.txt && pre-commit install
+# 手動実行:    pre-commit run --all-files
+# スキップ:     git commit --no-verify（非推奨）
+
+repos:
+  - repo: local
+    hooks:
+      - id: virtual-cto-gate
+        name: Virtual CTO 機械ゲート（pytest + mypy）
+        entry: python scripts/virtual_cto_gate.py --fast
+        language: system
+        pass_filenames: false

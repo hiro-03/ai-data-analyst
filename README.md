@@ -316,6 +316,18 @@ mypy layers/fishing_common/python/fishing_common/ lambdas/ \
   --ignore-missing-imports --explicit-package-bases
 ```
 
+### Virtual CTO 機械ゲート（コミット毎）
+
+`pip install -r requirements-dev.txt` のあと **pre-commit を有効化**すると、`git commit` 時に `scripts/virtual_cto_gate.py --fast` が **pytest + mypy** を実行し、失敗時はコミットが拒否されます（緊急時のみ `git commit --no-verify`）。
+
+```bash
+pre-commit install
+# 手動で全ファイルに対して実行する場合
+pre-commit run --all-files
+```
+
+**GitHub 上の見える化**: `main` へ push した CI ジョブの **Summary** に、手動レビュー用チェックリスト（IAM・Secrets・型・日本語）が Markdown で追記されます。PR 作成時は `.github/pull_request_template.md` のチェックボックスも利用してください。
+
 ---
 
 ## 最終是正完了報告（CTO への回答）
