@@ -2,7 +2,7 @@
 Pydantic v2 共通スキーマ定義。
 
 - FishingRequest         : POST /fishing の入力バリデーション用スキーマ
-- FishingAdviceResponse  : Bedrock AgentCore の出力検証用スキーマ
+- FishingAdviceResponse  : Bedrock エージェント（InvokeAgent）出力の検証用スキーマ
 
 FishingAdviceResponse は推論 Lambda の内部でも使用する。Bedrock が返す JSON が
 このスキーマを満たさない場合（スコアの範囲外、必須フィールド欠損等）は

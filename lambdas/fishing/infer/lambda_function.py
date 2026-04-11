@@ -2,7 +2,7 @@
 釣果推論 Lambda。
 
 Step Functions エンベロープを展開し、潮汐・海況・気象のファクトを組み立てて
-Amazon Bedrock AgentCore（InvokeAgent）に最終アドバイスを依頼する。
+Amazon Bedrock エージェント（InvokeAgent）に最終アドバイスを依頼する。
 """
 import json
 import logging

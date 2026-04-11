@@ -2,7 +2,7 @@
 
 クライアントから送られた **緯度・経度** に基づき **最寄りの観測所を特定**し、
 潮汐・海況・気象の **3 系統**のデータを外部 API から取得したうえで、
-**Amazon Bedrock AgentCore** により釣りのアドバイスを返すサーバーレス API です。
+**Amazon Bedrock のエージェント**（`bedrock-agent-runtime` の **`InvokeAgent`**）により釣りのアドバイスを返すサーバーレス API です。
 
 本番運用に求められるセキュリティ・可観測性・耐障害性の要件を、IaC（AWS SAM）でコードとして定義しています。
 
@@ -29,7 +29,7 @@ Lambda：API プロキシ
        │               ※ いずれか失敗しても Catch で推論を継続（部分障害許容設計）
        │
        └─ FishingInferenceLambda
-            ├─ Bedrock AgentCore（InvokeAgent）呼び出し
+            ├─ Amazon Bedrock エージェント（InvokeAgent）呼び出し
             ├─ Pydantic による出力スキーマ検証（非 JSON・範囲外の値はすぐに例外）
             └─ CloudWatch カスタムメトリクス（AdviceScore）送信
 ```
@@ -43,6 +43,11 @@ Lambda：API プロキシ
 | ストレージ | DynamoDB（2テーブル）| 観測所マスタ・外部 API キャッシュ（TTL + PITR）|
 | 可観測性 | CloudWatch Alarms / X-Ray / SNS | ドリフト検知・分散トレース・アラート通知 |
 | CI/CD | GitHub Actions / AWS SAM | OIDC 認証・stg E2E ゲート・prod 手動承認 |
+
+### 推論レイヤーと用語
+
+- 推論は **Amazon Bedrock のエージェント**を **`bedrock-agent-runtime` の `InvokeAgent`** で呼び出します。エージェント ID・エイリアス ID は SSM（`/ai-data-analyst/bedrock/agent/*`）経由で Lambda に渡します。
+- AWS が別途提供する **「Amazon Bedrock AgentCore」**（URL に `bedrock-agentcore` が含まれる専用ホームのレジストリ／ランタイム等）は **本リポジトリのコードパスとは別製品**です。セットアップは **メインの Amazon Bedrock**（モデルアクセス・エージェントの作成）から行ってください。
 
 ---
 
