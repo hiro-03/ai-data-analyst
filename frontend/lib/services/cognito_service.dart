@@ -123,6 +123,10 @@ class CognitoService {
     if (t.contains('TooManyRequests')) {
       return 'リクエストが多すぎます。しばらくしてから再試行してください';
     }
+    // Cognito がクライアントに USER_PASSWORD_AUTH が無いときに返す（stg デプロイ未反映など）
+    if (message.contains('USER_PASSWORD_AUTH flow not enabled')) {
+      return 'Cognito アプリクライアントでパスワード認証が有効になっていません。インフラを再デプロイするか管理者に連絡してください。';
+    }
     return message;
   }
 
