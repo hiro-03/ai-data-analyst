@@ -68,7 +68,7 @@ def run_fast_gate() -> int:
             sys.executable,
             "-m",
             "mypy",
-            "layers/fishing_common/python/fishing_common/",
+            "layers/fishing_common/fishing_common/",
             "lambdas/",
             "--ignore-missing-imports",
             "--explicit-package-bases",

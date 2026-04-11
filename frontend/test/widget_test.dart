@@ -6,7 +6,7 @@
 // 正しく対応していることを自動検証します。
 //
 // バックエンドのスキーマ定義（参照元）:
-//   layers/fishing_common/python/fishing_common/schemas.py
+//   layers/fishing_common/fishing_common/schemas.py
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter_test/flutter_test.dart';

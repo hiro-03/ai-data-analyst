@@ -9,7 +9,7 @@ import '../config/app_config.dart';
 // 1 対 1 で対応するよう設計されています。
 //
 // バックエンド定義:
-//   layers/fishing_common/python/fishing_common/schemas.py
+//   layers/fishing_common/fishing_common/schemas.py
 //
 // API が返す JSON 構造（FishingAdviceResponse.model_dump() の出力）:
 //   {
@@ -79,7 +79,7 @@ class FishingSeason {
 /// 釣り推論 API のレスポンス全体（バックエンド FishingAdviceResponse に対応）。
 ///
 /// バックエンド側のスキーマ定義:
-///   layers/fishing_common/python/fishing_common/schemas.py#FishingAdviceResponse
+///   layers/fishing_common/fishing_common/schemas.py#FishingAdviceResponse
 class FishingResult {
   const FishingResult({
     required this.summary,

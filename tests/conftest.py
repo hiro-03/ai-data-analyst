@@ -23,10 +23,10 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Layer – テスト対象の各 Lambda から import 可能である必要がある。
-_LAYER_PYTHON = os.path.join(_REPO_ROOT, "layers", "fishing_common", "python")
-if _LAYER_PYTHON not in sys.path:
-    sys.path.insert(0, _LAYER_PYTHON)
+# Layer – テスト対象の各 Lambda から import 可能である必要がある（パッケージは layers/fishing_common/fishing_common）。
+_LAYER_ROOT = os.path.join(_REPO_ROOT, "layers", "fishing_common")
+if _LAYER_ROOT not in sys.path:
+    sys.path.insert(0, _LAYER_ROOT)
 
 # resolve_station は station_master.py を兄弟モジュールとして import する。
 _RESOLVE_DIR = os.path.join(_REPO_ROOT, "lambdas", "fishing", "resolve_station")

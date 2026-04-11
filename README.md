@@ -317,7 +317,7 @@ INFERENCE_PROVIDER=mock python lambdas/fishing/infer/lambda_function.py
 pytest tests/ --cov=lambdas --cov=layers --cov-report=term-missing
 
 # 型検査
-mypy layers/fishing_common/python/fishing_common/ lambdas/ \
+mypy layers/fishing_common/fishing_common/ lambdas/ \
   --ignore-missing-imports --explicit-package-bases
 ```
 

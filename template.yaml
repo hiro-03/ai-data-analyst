@@ -49,6 +49,9 @@ Resources:
   ########################################
   FishingCommonLayer:
     Type: AWS::Serverless::LayerVersion
+    Metadata:
+      # requirements.txt を pip し、レイヤーに pydantic 等を含める（未指定だとソースのみ zip され ImportModuleError になる）。
+      BuildMethod: python3.11
     Properties:
       LayerName: !Sub "${AWS::StackName}-fishing-common"
       ContentUri: layers/fishing_common/
@@ -386,10 +389,22 @@ Resources:
         - Statement:
             - Effect: Allow
               Action:
+                # InvokeAgent の認可は bedrock:InvokeAgent で評価される。エイリアス呼び出しは agent-alias の ARN が必要。
+                - bedrock:InvokeAgent
                 - bedrock-agent-runtime:InvokeAgent
-              # パラメータで渡したエージェント ARN にスコープ。
-              # 本番では BedrockAgentArn に完全なエージェント ARN を設定すること。
-              Resource: !Ref BedrockAgentArn
+              Resource:
+                # エージェント本体（parameter BedrockAgentArn）と、エイリアスごとの ARN の両方を許可する。
+                - !Ref BedrockAgentArn
+                - Fn::Join:
+                    - ""
+                    - - "arn:aws:bedrock:"
+                      - !Ref AWS::Region
+                      - ":"
+                      - !Ref AWS::AccountId
+                      - ":agent-alias/"
+                      - "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
+                      - "/"
+                      - "{{resolve:ssm:/ai-data-analyst/bedrock/agent/alias-id}}"
             - Effect: Allow
               Action:
                 - ssm:GetParameter

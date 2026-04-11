@@ -103,12 +103,13 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
         ],
     }
 
+    # enableTrace=True はストリーム内のトレースに追加 IAM が必要になることがあるため、本番は false に固定する。
     resp = _bedrock_agent.invoke_agent(
         agentId=agent_id,
         agentAliasId=agent_alias_id,
         sessionId=session_id,
         inputText=json.dumps(input_payload, ensure_ascii=False),
-        enableTrace=True,
+        enableTrace=False,
     )
 
     completion_text, _trace = _collect_agent_completion(resp)
