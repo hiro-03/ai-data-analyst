@@ -19,7 +19,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # モジュールレベルでクライアントを生成：ウォームスタート時に再利用してレイテンシを削減。
-_bedrock_agent = boto3.client("bedrock-agent-runtime")
+# リージョンは Lambda の AWS_REGION に明示（クロスリージョン誤呼び出しの切り分け用）。
+_bedrock_agent = boto3.client(
+    "bedrock-agent-runtime",
+    region_name=os.environ.get("AWS_REGION", "ap-northeast-1"),
+)
 _cloudwatch = boto3.client("cloudwatch")
 
 
@@ -80,6 +84,15 @@ def _invoke_agentcore(facts: Dict[str, Any], context: Any) -> Dict[str, Any]:
     agent_alias_id = os.environ.get("BEDROCK_AGENT_ALIAS_ID")
     if not agent_id or not agent_alias_id:
         raise RuntimeError("BEDROCK_AGENT_ID / BEDROCK_AGENT_ALIAS_ID が未設定です")
+
+    # AccessDenied 調査用：環境変数の実値とリージョン（SSM 解決後の文字列がここに載る）
+    _region = os.environ.get("AWS_REGION", "")
+    logger.info(
+        "InvokeAgent 予定: agent_id=%s agent_alias_id=%s AWS_REGION=%s",
+        agent_id,
+        agent_alias_id,
+        _region,
+    )
 
     session_id = getattr(context, "aws_request_id", None) or "session"
     input_payload = {
