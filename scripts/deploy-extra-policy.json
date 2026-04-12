@@ -1,6 +1,6 @@
 {
   "Version": "2012-10-17",
-  "Comment": "GitHub Actions デプロイロール用インラインポリシー（マネージドポリシー数上限対策）。各 Statement はアカウント 476963918877・リージョン ap-northeast-1 の本プロジェクト ARN にスコープする。以前 X-Ray 送信・Logs 配信 API 用に Resource:* があったが、sam deploy / CloudFormation 更新に当該権限は不要なため削除済み（最小権限）。",
+  "Comment": "GitHub Actions デプロイロール用インラインポリシー（マネージドポリシー数上限対策）。各 Statement はアカウント 476963918877・リージョン ap-northeast-1 の本プロジェクト ARN にスコープする。Resource: \"*\" は使用しない。WAF と API Gateway の関連付けは stg/prod の RestApi ID を固定。Bedrock API は CloudFormation がデプロイ時に GitHub ロール経由で呼ばないため本ポリシーから除外（運用で GetAgent が必要な場合は管理者ロールで実行）。",
   "Statement": [
     {
       "Sid": "SSMParameterRead",
@@ -74,7 +74,8 @@
       ],
       "Resource": [
         "arn:aws:wafv2:ap-northeast-1:476963918877:regional/webacl/ai-data-analyst-fishing*",
-        "arn:aws:apigateway:ap-northeast-1::/restapis/*/stages/*"
+        "arn:aws:apigateway:ap-northeast-1::/restapis/2ie0f0ucei/stages/*",
+        "arn:aws:apigateway:ap-northeast-1::/restapis/kgiv7wxd8l/stages/*"
       ]
     },
     {
@@ -96,22 +97,6 @@
         "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/lambda/ai-data-analyst-fishing*",
         "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/apigateway/ai-data-analyst-fishing*",
         "arn:aws:logs:ap-northeast-1:476963918877:log-group:/aws/stepfunctions/ai-data-analyst-fishing*"
-      ]
-    },
-    {
-      "Sid": "BedrockAgentReadOnly",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:GetAgent",
-        "bedrock:GetAgentAlias",
-        "bedrock:ListAgents",
-        "bedrock:ListAgentAliases",
-        "bedrock:TagResource",
-        "bedrock:UntagResource",
-        "bedrock:ListTagsForResource"
-      ],
-      "Resource": [
-        "arn:aws:bedrock:ap-northeast-1:476963918877:agent/*"
       ]
     }
   ]

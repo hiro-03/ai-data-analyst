@@ -53,7 +53,11 @@ Lambda：API プロキシ
 
 ## セキュリティ設計方針
 
-- **最小権限の原則**: GitHub Actions 用デプロイロール（`scripts/deploy-extra-policy.json`）は **すべての Statement でリソース ARN を明示**し、`Resource: "*"` は使用していません。Lambda 推論ロールの `cloudwatch:PutMetricData` のみ、AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件の組み合わせが必要（カスタムメトリクスはリソース ARN を指定できない）です。
+- **最小権限の原則**: GitHub Actions 用デプロイロール（`scripts/deploy-extra-policy.json`）は **`Resource: "*"` を使用しない**。各リソースはアカウント・プレフィックスまたは **stg/prod の API Gateway RestApi ID** で固定した ARN に限定する。Bedrock の `GetAgent` 等は **デプロイ時に GitHub ロール経由で呼ばれない**ため本ポリシーから除外している（運用で必要なら管理者ロールで実行）。Lambda 推論ロールの `cloudwatch:PutMetricData` のみ、AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件の組み合わせが必要（カスタムメトリクスはリソース ARN を指定できない）。
+- **ARN 末尾のプレフィックスワイルドカード（`*`）**: `deploy-extra-policy.json` では、アラーム名・SNS・ロググループ・SSM パスなど **リソース名の共通プレフィックスに続く部分**を `ai-data-analyst-fishing*` のように許容する。これは **サービス全体への無制限 `Resource:*` とは別**であり、スタック名プレフィックスでスコープした命名に合わせるためのものである。
+- **`infra/*.json` は参照用サンプル**: `Resource: "*"` を含む過去のドラフトが残っている。**運用で attach するインラインポリシーは `scripts/deploy-extra-policy.json` を正とする**（理由と注意は `infra/README.md`）。
+- **`template.yaml` の `BedrockAgentArn` 既定値**: 単独の `"*"` は使わず、`arn:aws:bedrock:ap-northeast-1:476963918877:agent/*` と **当アカウント内の Bedrock エージェント ARN パターンにのみ**スコープする。本番では `BEDROCK_AGENT_ARN` などで特定エージェント ID の ARN を渡すことを推奨。
+- **API Gateway `MethodSettings` の `HttpMethod: "*"` / `ResourcePath: "/*"`**: これらは **IAM の Resource ではなく**、ステージにどのメソッド・パスへログ設定を適用するかの CloudFormation プロパティである。
 - **OIDC 認証**: 長期の IAM アクセスキーを置かず、GitHub Actions から一時クレデンシャルで AWS を操作します。ロールは stg（`AWS_ROLE_ARN_STG`）と prod（`AWS_ROLE_ARN_PROD`）で分けています。
 - **環境分離**: `Stage` パラメータ（`stg` / `prod`）により、DynamoDB の削除保護、Cognito の認証フロー、Step Functions の実行データのログ記録の有無、API Gateway のステージ名、CloudWatch アラームのディメンションなどを **環境ごとに切り替え**ます。
 - **Pydantic バリデーション**: API の入口（リクエスト）と推論の出口（Bedrock レスポンス）の **両方**でスキーマ検証します。Bedrock が非 JSON や範囲外の値を返した場合は `ValidationError` とし、Step Functions の実行は `FAILED` になります。推論結果の **見かけ上の成功による品質劣化**を防ぎます。
@@ -128,13 +132,24 @@ aws iam create-open-id-connect-provider \
 | `AWS_ROLE_ARN_STG` | ✅ | OIDC で引き受けるステージング用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_STG` |
 | `AWS_ROLE_ARN_PROD` | ✅ | 本番デプロイ用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_PROD` |
 | `ALARM_EMAIL_STG` | 任意 | stg のアラーム通知メール（未設定時はワークフロー内の既定値） | `secrets.ALARM_EMAIL_STG` |
-| `BEDROCK_AGENT_ARN_STG` | 任意 | stg の Bedrock エージェント ARN（未設定時はワークフロー内の既定プレースホルダ） | `secrets.BEDROCK_AGENT_ARN_STG` |
+| `BEDROCK_AGENT_ARN_STG` | 任意 | stg の Bedrock エージェント ARN（未設定時は `template.yaml` の `BedrockAgentArn` 既定と同じ `arn:aws:bedrock:ap-northeast-1:476963918877:agent/*` を `deploy.yml` が渡す） | `secrets.BEDROCK_AGENT_ARN_STG` |
 | `STG_SMOKE_USER_EMAIL` | ✅（E2E ゲート利用時） | stg スモークテスト用 Cognito ユーザー名 | `secrets.STG_SMOKE_USER_EMAIL` |
 | `STG_SMOKE_USER_PASSWORD` | ✅（E2E ゲート利用時） | 上記ユーザーのパスワード | `secrets.STG_SMOKE_USER_PASSWORD` |
 | `ALARM_EMAIL` | 任意 | 本番アラーム通知メール | `secrets.ALARM_EMAIL` |
-| `BEDROCK_AGENT_ARN` | 任意 | 本番 Bedrock エージェント ARN | `secrets.BEDROCK_AGENT_ARN` |
+| `BEDROCK_AGENT_ARN` | 任意 | 本番 Bedrock エージェント ARN（未設定時は上記と同様に `agent/*` 既定を渡す） | `secrets.BEDROCK_AGENT_ARN` |
 
 ### ローカルからの手動デプロイ
+
+`sam deploy --parameter-overrides` に渡すキーは **CloudFormation のパラメータ名**であり、GitHub Secrets 名（例: `ALARM_EMAIL`）とは別である（対応関係は下表）。
+
+| パラメータ名（`template.yaml`） | 主な用途 |
+|--------------------------------|----------|
+| `DeployTimestamp` | API デプロイの強制更新用（CI は `github.sha` を渡す想定） |
+| `Stage` | `stg` または `prod` |
+| `WafRateLimitPer5Min` | WAF レート制限（5 分あたり） |
+| `ApiAccessLogRetentionDays` | API アクセスログの保持日数 |
+| `AlarmEmail` | CloudWatch アラーム通知先（GitHub の `ALARM_EMAIL` / `ALARM_EMAIL_STG` と対応） |
+| `BedrockAgentArn` | InvokeAgent の IAM スコープ（GitHub の `BEDROCK_AGENT_ARN` / `BEDROCK_AGENT_ARN_STG` と対応） |
 
 ```powershell
 sam validate --template-file template.yaml --lint
@@ -340,15 +355,18 @@ pre-commit run --all-files
 最終ゲートで指摘された **3 点**について、コードとドキュメントで次のとおり完了した。
 
 1. **IAM の厳格化**  
-   `scripts/deploy-extra-policy.json` から `Resource: "*"` を付与していた Statement（旧 X-Ray・Logs 配信 API 用）を **削除**した。GitHub ロールの `sam deploy` では当該 API を直接呼ぶ必要がなく、**プロジェクトプレフィックス付き ARN のみ**で最小権限を維持する。  
-   併せて `template.yaml` の Step Functions 実行ロールでは、ログ配信権限の `Resource` を **`SfnLogGroup` の ARN と `${LogGroupArn}:*`（ログストリーム配下）** に限定した。  
-   なお `FishingInferenceLambda` の `cloudwatch:PutMetricData` は **AWS 仕様上 `Resource: "*"` + `cloudwatch:namespace` 条件**が推奨パターンのため残す（カスタムメトリクスにリソース ARN を指定できない）。
+   `scripts/deploy-extra-policy.json` は **`Resource: "*"` を使用しない**。WAF と API Gateway ステージの関連付けは **`restapis/2ie0f0ucei/stages/*`（stg）と `restapis/kgiv7wxd8l/stages/*`（prod）** に限定（スタック再作成で RestApi ID が変わった場合は本ポリシーを更新）。不要だった Bedrock 読み取り Statement は **デプロイ経路で未使用のため削除**。  
+   `template.yaml` の `BedrockAgentArn` パラメータ既定は **単独の `"*"` を廃止**し、当アカウントの `agent/*` パターンに変更。  
+   併せて Step Functions 実行ロールのログ配信は **`SfnLogGroup` の ARN と `${LogGroupArn}:*`** に限定済み。  
+   `FishingInferenceLambda` の `cloudwatch:PutMetricData` は **AWS 仕様上 `Resource: "*"` + `cloudwatch:namespace` 条件**のまま（カスタムメトリクスにリソース ARN を指定できない）。
 
 2. **README と CI/CD の Secrets 完全同期**  
-   上記 **「GitHub Secrets 管理表」** を追加し、`.github/workflows/deploy.yml` が参照する `secrets.*` の名前と **1 対 1 で一致**させた。本パイプラインは **AWS Secrets Manager を使わず GitHub Secrets のみ**であることも明記した。
+   **「GitHub Secrets 管理表」** の Secret 名と `.github/workflows/deploy.yml` の `secrets.*` およびファイル先頭コメントの列挙を **同一**に保つ。`BEDROCK_AGENT_*` 未設定時に渡す `BedrockAgentArn` のプレースホルダは **`template.yaml` の既定値と一致**させた。
 
 3. **モバイル SRP 認証の整合**  
-   Flutter は **AWS Amplify Auth**（`amplify_flutter` / `amplify_auth_cognito`）を導入し、**`USER_SRP_AUTH`（SRP）** でサインインする。`template.yaml` の `CognitoUserPoolClient` から **`ALLOW_USER_PASSWORD_AUTH` を除去**し、平文パスワードを `InitiateAuth` に載せるクライアント経路を閉じた。CI の `scripts/smoke_test.py` は引き続き **`ADMIN_USER_PASSWORD_AUTH`**（IAM 必須）でトークン取得する別経路として文書化した。
+   **IaC**: `CognitoUserPoolClient` は常に `ALLOW_USER_SRP_AUTH`。`ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は **`IsNotProd`（stg）のみ**有効（本番は SRP のみ）。  
+   **Flutter**: `AppConfig.usePasswordAuthOnWeb` は `kIsWeb && fishingApiUrl.contains('/stg/')` のため **モバイル／デスクトップは常に Amplify の SRP**。**Flutter Web かつ stg API URL** のときのみ `USER_PASSWORD_AUTH`（HTTPS）。  
+   **CI**: `scripts/smoke_test.py` は **`ADMIN_USER_PASSWORD_AUTH`** でトークン取得（別経路）。
 
 ---
 
@@ -360,7 +378,7 @@ pre-commit run --all-files
 
 | # | 指摘内容 | 是正内容 | 対象ファイル |
 |---|---------|---------|-------------|
-| 1 | `deploy-extra-policy.json` に `Resource: "*"` のワイルドカードが残存 | `Resource:*` を使う Statement を削除し、残りを ARN スコープに統一。Step Functions ロールのログ権限は `SfnLogGroup` に限定 | `scripts/deploy-extra-policy.json`, `template.yaml` |
+| 1 | `deploy-extra-policy.json` に広いリソース指定が残存 | `Resource: "*"` は使用しない。WAF–API Gateway の関連付けは stg/prod の RestApi ID で固定。Bedrock 読み取りはデプロイ不要のため削除。Step Functions ロールのログ権限は `SfnLogGroup` に限定 | `scripts/deploy-extra-policy.json`, `template.yaml` |
 | 2 | `deploy.yml` の `sam validate/build` ステップで不要な本番ロールの assume が実行されていた | `ci` ジョブから `configure-aws-credentials` を削除。SAM の構文検証・ビルドに AWS 認証は不要であることを明確化 | `.github/workflows/deploy.yml` |
 
 ### 重大 (Major)

@@ -10,10 +10,10 @@ name: Deploy SAM Application
 #   AWS_ROLE_ARN_STG      - ステージング用 IAM ロール ARN
 #   AWS_ROLE_ARN_PROD     - 本番用 IAM ロール ARN
 #
-# 任意（未設定なら samconfig.toml の既定値）:
+# 任意（未設定なら template.yaml の BedrockAgentArn 既定に合わせた agent/* を parameter-overrides で渡す）:
 #   ALARM_EMAIL           - 本番アラートメール
 #   ALARM_EMAIL_STG       - ステージングアラートメール
-#   BEDROCK_AGENT_ARN     - 本番 Bedrock エージェント ARN
+#   BEDROCK_AGENT_ARN     - 本番 Bedrock エージェント ARN（InvokeAgent の IAM スコープ用）
 #   BEDROCK_AGENT_ARN_STG - ステージング Bedrock エージェント ARN
 #
 # スモークテスト用（ステージング E2E ゲートに必須）:
@@ -144,7 +144,7 @@ jobs:
             --parameter-overrides \
               DeployTimestamp="${{ github.sha }}" \
               AlarmEmail="${{ secrets.ALARM_EMAIL_STG || 'stg-ops@example.com' }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN_STG || 'arn:aws:bedrock:ap-northeast-1:476963918877:agent/*' }}" \
               Stage="stg"
 
 # ------------------------------------------------------------------------------
@@ -240,5 +240,5 @@ jobs:
             --parameter-overrides \
               DeployTimestamp="${{ github.sha }}" \
               AlarmEmail="${{ secrets.ALARM_EMAIL || 'ops@example.com' }}" \
-              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN || 'arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0' }}" \
+              BedrockAgentArn="${{ secrets.BEDROCK_AGENT_ARN || 'arn:aws:bedrock:ap-northeast-1:476963918877:agent/*' }}" \
               Stage="prod"

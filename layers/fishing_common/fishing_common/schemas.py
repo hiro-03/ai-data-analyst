@@ -38,6 +38,7 @@ class FishingAdviceResponse(BaseModel):
     summary: str = ""
     score: ScoreDetail
     season: SeasonDetail
+    # 実 API 契約では文字列リストを想定。Flutter 側は List[str] として受け取る。
     best_windows: List[Any] = []
     recommended_tactics: List[Any] = []
     risk_and_safety: List[Any] = []

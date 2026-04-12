@@ -10,7 +10,8 @@ import '../config/app_config.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // 認証方針
 //
-// - **モバイル / デスクトップ**: Amplify Auth の既定フロー（USER_SRP_AUTH / SRP）。
+// - **モバイル / デスクトップ**: `kIsWeb == false` のため `usePasswordAuthOnWeb` は常に false。
+//   Amplify Auth の既定フロー（USER_SRP_AUTH / SRP）のみ。Cognito 側も本番ではパスワードフローを無効。
 // - **Flutter Web × ステージング API**: ブラウザ環境では SRP 実装が失敗することがあるため、
 //   Cognito の **USER_PASSWORD_AUTH**（HTTPS 上の InitiateAuth）に切り替える。
 //   ステージングのユーザープールクライアントのみ `ALLOW_USER_PASSWORD_AUTH` を有効化している。

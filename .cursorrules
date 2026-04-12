@@ -11,7 +11,7 @@
 
 - **最小権限原則 (Least Privilege)**: IAM ポリシーでは `"Resource": "*"` を**原則禁止**とする。特定の ARN またはタグ条件による制限を優先すること。AWS 仕様上どうしてもワイルドカードが必要な場合は、公式ドキュメントに根拠があることを確認し、**README のセキュリティ設計方針に例外と理由（例: 条件キーとの併用）を追記**すること。
 - **Secretsの一貫性**: `deploy.yml`（GitHub Secrets）、`template.yaml`、および README の Secrets 管理表の変数名は、1文字の揺れもなく完全に一致させること。
-- **モバイルSRP認証**: 認証方式は「Cognito SRP認証」を唯一の正解とする。インフラ定義とFlutter実装の間に1ミリの不整合も残さないこと。
+- **Cognito 認証（SRP を基準）**: **本番**および **モバイル／デスクトップ** クライアントでは `USER_SRP_AUTH`（SRP）を正とする。**ステージングの Flutter Web のみ**、ブラウザ上の制約に対応するため `USER_PASSWORD_AUTH` を許容する（HTTPS・`template.yaml` の `IsNotProd` と `AppConfig.usePasswordAuthOnWeb` と整合）。CI のスモークは `ADMIN_USER_PASSWORD_AUTH`（別経路）。インフラ定義・Flutter・README の説明に食い違いを残さないこと。
 
 ## 3. MLOps 品質ゲート (シニアレベルの設計)
 

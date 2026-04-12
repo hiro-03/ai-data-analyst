@@ -34,8 +34,9 @@ Parameters:
     Description: >
       InvokeAgent 権限のスコープに使う Bedrock エージェントの ARN。
       形式: arn:aws:bedrock:<region>:<account>:agent/<agent-id>
-      本番では具体的な ARN を設定。既定の '*' は任意エージェントを許可（初期セットアップ用のみ）。
-    Default: "*"
+      本番は特定エージェントの ARN を parameter-overrides で渡すこと。
+      既定値は当アカウント・東京リージョンの agent/* のみ（全エージェントではなく agent リソースに限定）。
+    Default: "arn:aws:bedrock:ap-northeast-1:476963918877:agent/*"
 
 Conditions:
   # 本番デプロイ時に真。セキュリティとデータ保持ルールを厳しくする。
@@ -412,6 +413,8 @@ Resources:
               Resource:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/id"
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/alias-id"
+            # カスタムメトリクス PutMetricData は IAM でリソース ARN を指定できず Resource が * になる（AWS 仕様）。
+            # 代わりに cloudwatch:namespace 条件で FishingAdvice/Inference に限定する（README の既知例外と同じ）。
             - Effect: Allow
               Action:
                 - cloudwatch:PutMetricData
@@ -637,6 +640,7 @@ Resources:
           "protocol":"$context.protocol","responseLength":"$context.responseLength",
           "integrationStatus":"$context.integration.status","integrationLatency":"$context.integration.latency",
           "latency":"$context.responseLatency","userAgent":"$context.identity.userAgent"}
+      # ResourcePath / HttpMethod の * は API Gateway の「どのメソッドにログ設定を適用するか」の指定（IAM の Resource ではない）。
       MethodSettings:
         - MetricsEnabled: true
           LoggingLevel: INFO

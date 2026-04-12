@@ -10,7 +10,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 class AppConfig {
   AppConfig._();
 
-  /// Flutter Web かつステージング API 向けビルド（USER_PASSWORD_AUTH 分岐）。
+  /// Flutter Web かつステージング API 向けビルドのみ true（USER_PASSWORD_AUTH 分岐）。
+  /// `kIsWeb` が false のモバイル／デスクトップでは常に false となり、SRP のみが使われる。
   static bool get usePasswordAuthOnWeb =>
       kIsWeb && fishingApiUrl.contains('/stg/');
 
