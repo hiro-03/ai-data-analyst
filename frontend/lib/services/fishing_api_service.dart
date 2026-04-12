@@ -183,15 +183,27 @@ class FishingApiService {
     );
 
     if (response.statusCode != 200) {
+      // 502/504 時はプロキシ Lambda が Step Functions の失敗内容を `cause` に載せる。
+      // CloudWatch 調査用に trace_id も必ず表示する。
       Map<String, dynamic> body;
       try {
         body = jsonDecode(response.body) as Map<String, dynamic>;
       } catch (_) {
         body = {};
       }
+      final parts = <String>[];
+      if (body['error'] != null) parts.add('${body['error']}');
+      if (body['cause'] != null && '${body['cause']}'.trim().isNotEmpty) {
+        parts.add('原因: ${body['cause']}');
+      }
+      if (body['detail'] != null) parts.add('${body['detail']}');
+      final traceId = body['trace_id'];
+      final detailMsg = parts.isEmpty
+          ? (response.body.isNotEmpty ? response.body : 'レスポンス本文なし')
+          : parts.join(' / ');
       throw FishingApiException(
-        'API エラー ${response.statusCode}: '
-        '${body['message'] ?? body['error'] ?? response.body}',
+        'API エラー ${response.statusCode}: $detailMsg'
+        '${traceId != null ? ' [trace_id: $traceId]' : ''}',
       );
     }
 

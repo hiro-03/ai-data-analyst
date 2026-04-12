@@ -387,15 +387,17 @@ Resources:
             - "mock-alias-id"
       Policies:
         - AWSLambdaBasicExecutionRole
-        - Statement:
+        # IAM ポリシー JSON の先頭に Version を付与（コンソール警告「Missing Version」回避）。
+        - Version: "2012-10-17"
+          Statement:
             - Effect: Allow
               Action:
-                # InvokeAgent の認可は bedrock:InvokeAgent で評価される。エイリアス呼び出しは agent-alias の ARN が必要。
                 - bedrock:InvokeAgent
-                - bedrock-agent-runtime:InvokeAgent
               Resource:
-                # エージェント本体（parameter BedrockAgentArn）と、エイリアスごとの ARN の両方を許可する。
                 - !Ref BedrockAgentArn
+                - !Sub
+                    - "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/${AgentId}"
+                    - AgentId: "{{resolve:ssm:/ai-data-analyst/bedrock/agent/id}}"
                 - Fn::Join:
                     - ""
                     - - "arn:aws:bedrock:"
@@ -413,8 +415,6 @@ Resources:
               Resource:
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/id"
                 - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/ai-data-analyst/bedrock/agent/alias-id"
-            # カスタムメトリクス PutMetricData は IAM でリソース ARN を指定できず Resource が * になる（AWS 仕様）。
-            # 代わりに cloudwatch:namespace 条件で FishingAdvice/Inference に限定する（README の既知例外と同じ）。
             - Effect: Allow
               Action:
                 - cloudwatch:PutMetricData

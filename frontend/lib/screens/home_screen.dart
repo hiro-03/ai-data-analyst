@@ -256,6 +256,27 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 502/504 は多くがサーバー側（Step Functions）の失敗。Wi‑Fi 切れと誤解されないよう文言を分岐する。
+  IconData _errorLeadingIcon() {
+    final e = _error ?? '';
+    if (e.startsWith('通信エラー')) return Icons.wifi_off;
+    return Icons.error_outline;
+  }
+
+  String _errorSubtext() {
+    final e = _error ?? '';
+    if (e.contains('state machine') ||
+        e.contains('API エラー 502') ||
+        e.contains('API エラー 504')) {
+      return 'サーバー側のワークフローが失敗しています（通信途切れとは限りません）。\n'
+          'しばらくしてから再試行するか、メッセージ内の trace_id を添えてログを確認してください。';
+    }
+    if (e.startsWith('通信エラー')) {
+      return '通信状況を確認してから再度お試しください';
+    }
+    return '時間をおいて再度お試しください。';
+  }
+
   Widget _buildResultPanel() {
     // エラー表示（オフライン・API エラー等）
     if (_error != null) {
@@ -265,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.wifi_off, color: Colors.redAccent, size: 36),
+              Icon(_errorLeadingIcon(), color: Colors.redAccent, size: 36),
               const SizedBox(height: 12),
               Text(
                 _error!,
@@ -274,10 +295,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-              // 釣り場（屋外・モバイル回線）での利用を考慮したフォローメッセージ。
-              const Text(
-                '通信状況を確認してから再度お試しください',
-                style: TextStyle(color: Colors.white38, fontSize: 11),
+              Text(
+                _errorSubtext(),
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
                 textAlign: TextAlign.center,
               ),
             ],
