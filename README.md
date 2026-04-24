@@ -1,19 +1,29 @@
-# 釣り推論 API | 本番運用を想定した MLOps サンプル
+# 釣り推論 API
 
-> **このリポジトリで伝えたいこと**  
-> - 釣りアドバイス推論を題材に、**生成系・外部データ・エージェント**を一つのプロダクトパイプラインに乗せ、**本番想定の運用・再現性・ガバナンス**を1リポジトリで扱うこと。  
-> - AI/MLは「**作る**」以上に「**壊れずに運用し、どこで劣化したか分かる**」ことが難しい、という前提に立つ。  
-> - 本プロジェクトの価値は、精度スコアの提示より **IaC（AWS SAM）・最小権限・CI/CD・入出力のスキーマ固定・観測**が揃い、**業務系プロダクトに汎用して議論できる境界**（認証、権限、監査、障害）を扱うこと。  
-> - 特定SaaSに依存した話ではないが、BtoBで求められやすい **「誰がいつ何をデプロイしたか」「本番で何が起きたか」**に踏み込む。  
-> - 一次選考向けの要点は **下記「アーキテクチャ」〜「CI/CD パイプライン」** まで。それ以降は **詳細章**（手順・表・切り分け）に分離し、**情報過多に見えない**よう並び替えた（内容は削っていない）。  
-
-**概要**：クライアントが送る **緯度・経度** に基づき **最寄り観測所を解決**し、潮汐・海況・気象の **3系統**を外部 API から取得したうえで、**Amazon Bedrock エージェント**（`bedrock-agent-runtime` の `InvokeAgent`）により釣りアドバイスを返す **サーバーレス API** です。セキュリティ・可観測性・耐障害性の要件を **IaC** で宣言し、**GitHub Actions** で stg 経由の E2E ゲートのあと本番承認、という流れにしています。
+緯度・経度に基づき最寄り観測所を解決し、潮汐・海況・気象の3系統を外部 API から取得したうえで、**Amazon Bedrock エージェント**（`bedrock-agent-runtime` の `InvokeAgent`）により釣りアドバイスを返す **サーバーレス API** です。インフラは **AWS SAM**、デリバリは **GitHub Actions**、実行基盤は AWS のマネージドサービスで構成しています。
 
 ---
 
-## アーキテクチャ概要
+## 導入
 
-```
+### プロダクトビジョン / 設計思想
+
+- 生成AIは高い表現力を持つ一方、出力の不確実性と外部依存を内包します。本プロジェクトは、その不確実性を**バリデーション、監視、権限制御、デプロイ統制**で扱うことを設計の核としています。  
+- 目的は、推論結果を返すこと自体ではなく、**壊さず運用し続けられる AI 機能**としてサービスに載せることです。  
+- 推論結果の品質は、モデルの性能だけでなく、入力の整合性、外部データの欠損耐性、認証・権限、変更履歴の追跡可能性によって支えられます。  
+- そのため、入出力スキーマ、部分障害時の継続戦略、環境分離、最小権限、CI/CD の承認ゲートを一体で定義しています。  
+- 業務系プロダクトに必要な安心感は、単発のデモ品質ではなく、**誰がいつ何を変更し、何が起きたかを追える運用性**から生まれます。  
+- 本リポジトリは、生成AIの活用を「実験」ではなく、**継続運用可能なプロダクト機能**として成立させるための実装例です。
+
+---
+
+## コアアーキテクチャと ML 信頼性
+
+認証、外部データ取得、推論、監視を明確に分離することで、不正アクセスの防止、外部依存による停止回避、品質劣化の早期検知を実現しています。
+
+### システム構成
+
+```text
 クライアント
   │  POST /fishing（Cognito JWT 必須）
   ▼
@@ -29,62 +39,73 @@ Lambda：API プロキシ
        ├─【Parallel】─ GetTide（Stormglass / DynamoDB キャッシュ）
        │               GetMarine（Open-Meteo Marine / DynamoDB キャッシュ）
        │               GetForecast（気象庁 JMA API / DynamoDB キャッシュ）
-       │               ※ いずれか失敗しても Catch で推論を継続（部分障害許容設計）
+       │               各取得失敗時は Catch により推論を継続（部分障害許容）
        │
        └─ FishingInferenceLambda
             ├─ Amazon Bedrock エージェント（InvokeAgent）呼び出し
-            ├─ Pydantic による出力スキーマ検証（非 JSON・範囲外の値はすぐに例外）
+            ├─ Pydantic による出力スキーマ検証（非 JSON・範囲外の値は例外）
             └─ CloudWatch カスタムメトリクス（AdviceScore）送信
 ```
-
-**主要 AWS サービス構成**
 
 | レイヤー | サービス | 役割 |
 |---------|---------|------|
 | セキュリティ | Cognito / WAFv2 | JWT 認証・レート制限・マネージドルール |
 | 計算 | Lambda（Python 3.11）/ Step Functions Express | 推論オーケストレーション |
-| ストレージ | DynamoDB（2テーブル）| 観測所マスタ・外部 API キャッシュ（TTL + PITR）|
-| 可観測性 | CloudWatch Alarms / X-Ray / SNS | ドリフト検知・分散トレース・アラート通知 |
-| CI/CD | GitHub Actions / AWS SAM | OIDC 認証・stg E2E ゲート・prod 手動承認 |
+| ストレージ | DynamoDB（2テーブル） | 観測所マスタ・外部 API キャッシュ（TTL + PITR） |
+| 可観測性 | CloudWatch Alarms / X-Ray / SNS | 品質劣化の検知・分散トレース・アラート |
+| CI/CD | GitHub Actions / AWS SAM | OIDC・stg E2E ゲート・prod 手動承認 |
 
 ### 推論レイヤーと用語
 
-- 推論は **Amazon Bedrock のエージェント**を **`bedrock-agent-runtime` の `InvokeAgent`** で呼び出します。エージェント ID・エイリアス ID は SSM（`/ai-data-analyst/bedrock/agent/*`）経由で Lambda に渡します。
-- AWS が別途提供する **「Amazon Bedrock AgentCore」**（URL に `bedrock-agentcore` が含まれる専用ホームのレジストリ／ランタイム等）は **本リポジトリのコードパスとは別製品**です。セットアップは **メインの Amazon Bedrock**（モデルアクセス・エージェントの作成）から行ってください。
+- 推論は **Amazon Bedrock のエージェント**を **`bedrock-agent-runtime` の `InvokeAgent`** で呼び出します。エージェント ID・エイリアス ID は SSM（`/ai-data-analyst/bedrock/agent/*`）経由で Lambda に渡します。  
+- **Amazon Bedrock AgentCore**（URL に `bedrock-agentcore` を含むレジストリ／ランタイム等）は、本リポジトリのコードパスとは**別製品**です。エージェントの構築は **Amazon Bedrock 本体**（モデルアクセス・エージェント作成）から行います。
+
+### ML 信頼性設計
+
+AI の不確実性を業務上許容できる形に変換するため、以下を設計に組み込んでいます。
+
+- **スキーマ検証**  
+  Pydantic によりリクエストと推論応答の両方を検証します。非 JSON や範囲外の値を成功レスポンスに混在させず、**品質のサイレント劣化**を防ぎます。
+
+- **部分障害許容**  
+  潮汐・海況・気象の取得は並列化し、失敗分岐は Step Functions 上で Catch します。外部依存の一部失敗で API 全体を停止させず、**完全停止の回避**を優先します。
+
+- **監査可能性**  
+  エージェント ID・エイリアス・ARN スコープを SSM と IaC に外出しし、Lambda に直書きしません。これにより、**誰が、いつ、どのエージェントを本番に載せ替えたか**を追跡しやすくしています。
+
+- **指標設計**  
+  オフライン正解率より先に、AdviceScore カスタムメトリクス、スコア閾値、一定期間の劣化アラームを用い、**本番での動作信頼性**を優先的に監視します。
 
 ---
 
-## ML / 推論の運用思想（採用で見る評価軸）
+## セキュリティとデリバリー
 
-オフラインの正解率より先に、**本番で信頼して回せるか**を優先する前提での設計です。
+AI 機能の信頼性は、推論ロジック単体では成立しません。不正アクセスの防止、安全な変更反映、環境ごとの差異統制を一体で扱う必要があります。
 
-- **推論結果を必ずスキーマ検証する** — 入口・出口の両方で Pydantic を通し、非JSON・範囲外を **黙って成功扱いにしない**。プロンプトや上游の仕様揺れを「静かに品質劣化」させないため。  
-- **外部データの欠損・失敗時も処理を止めない** — 潮汐・海況・気象の取得は並列化し、いずれか失敗は Step Functions 上で Catch。業務上「完全に止める」より、**得られる根拠の範囲で推論を返す**判断（ただし失敗事実は追跡可能に残す）。  
-- **モデル／エージェント変更の監査可能な置き方** — エージェント ID・エイリアスを SSM や ARN スコープで外に出し、Lambda 内の直書きを避ける。IaC と IAM の境界で **「誰が何を本番に載せ替えたか」**を議論しやすくする。  
-- **指標の第一候補を「正解率」ではなく信頼性** — 例：AdviceScore のカスタムメトリクス、スコア閾値系・一定期間の劣化系アラーム。オフラインベンチの前に、**本番の異常系・劣化**に先に光を当てる。
+### セキュリティ・バイ・デザイン
 
----
+- **最小権限**  
+  GitHub Actions 用デプロイロール（`scripts/deploy-extra-policy.json`）は `Resource: "*"` を用いません。各リソースはアカウント・プレフィックス、または stg/prod の API Gateway RestApi ID で固定した ARN に限定します。Bedrock の `GetAgent` 等はデプロイロール経由で呼ばない前提とし、推論 Lambda の `cloudwatch:PutMetricData` のみ、AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件を組み合わせています。  
+- **ARN プレフィックス制御**  
+  アラーム名・SNS・ロググループ・SSM パスなど、命名規則 `ai-data-analyst-fishing*` に揃えた末尾ワイルドカードのみを許容し、広範囲 `Resource:*` とは区別しています。  
+- **ポリシーの正本管理**  
+  `infra/*.json` には過去のドラフトが残り得ます。運用で attach するインラインポリシーは **`scripts/deploy-extra-policy.json`** を正とします。  
+- **Bedrock ARN のスコープ**  
+  `template.yaml` の `BedrockAgentArn` 既定値は単独の `"*"` を用いず、`arn:aws:bedrock:ap-northeast-1:476963918877:agent/*` など、当アカウント内エージェントに限定します。  
+- **OIDC**  
+  長期 IAM アクセスキーを置かず、GitHub Actions は一時クレデンシャルで AWS を操作します。ロールは stg（`AWS_ROLE_ARN_STG`）と prod（`AWS_ROLE_ARN_PROD`）で分離しています。  
+- **環境分離**  
+  `Stage`（`stg` / `prod`）により、DynamoDB 削除保護、Cognito 認証フロー、Step Functions 実行データのログ記録有無、API Gateway ステージ名、CloudWatch アラームのディメンション等を切り替えます。  
+- **入力・出力の固定**  
+  Pydantic により API の入口と Bedrock 応答の両方を検証し、`ValidationError` 時は Step Functions を `FAILED` として処理します。  
+- **Cognito**  
+  `AllowAdminCreateUserOnly: true` と `PreventUserExistenceErrors: ENABLED` により、自己登録の抑止とユーザー列挙耐性を確保します。`ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は **staging のみ**（`IsNotProd`）有効です。モバイル・デスクトップは SRP、Flutter Web（stg）は HTTPS 上の `USER_PASSWORD_AUTH` を許可する構成です。
 
-## セキュリティ設計方針
+### デリバリーパイプライン
 
-- **最小権限の原則**: GitHub Actions 用デプロイロール（`scripts/deploy-extra-policy.json`）は **`Resource: "*"` を使用しない**。各リソースはアカウント・プレフィックスまたは **stg/prod の API Gateway RestApi ID** で固定した ARN に限定する。Bedrock の `GetAgent` 等は **デプロイ時に GitHub ロール経由で呼ばれない**ため本ポリシーから除外している（運用で必要なら管理者ロールで実行）。Lambda 推論ロールの `cloudwatch:PutMetricData` のみ、AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件の組み合わせが必要（カスタムメトリクスはリソース ARN を指定できない）。
-- **ARN 末尾のプレフィックスワイルドカード（`*`）**: `deploy-extra-policy.json` では、アラーム名・SNS・ロググループ・SSM パスなど **リソース名の共通プレフィックスに続く部分**を `ai-data-analyst-fishing*` のように許容する。これは **サービス全体への無制限 `Resource:*` とは別**であり、スタック名プレフィックスでスコープした命名に合わせるためのものである。
-- **`infra/*.json` は参照用サンプル**: `Resource: "*"` を含む過去のドラフトが残っている。**運用で attach するインラインポリシーは `scripts/deploy-extra-policy.json` を正とする**（理由と注意は `infra/README.md`）。
-- **`template.yaml` の `BedrockAgentArn` 既定値**: 単独の `"*"` は使わず、`arn:aws:bedrock:ap-northeast-1:476963918877:agent/*` と **当アカウント内の Bedrock エージェント ARN パターンにのみ**スコープする。本番では `BEDROCK_AGENT_ARN` などで特定エージェント ID の ARN を渡すことを推奨。
-- **API Gateway `MethodSettings` の `HttpMethod: "*"` / `ResourcePath: "/*"`**: これらは **IAM の Resource ではなく**、ステージにどのメソッド・パスへログ設定を適用するかの CloudFormation プロパティである。
-- **OIDC 認証**: 長期の IAM アクセスキーを置かず、GitHub Actions から一時クレデンシャルで AWS を操作します。ロールは stg（`AWS_ROLE_ARN_STG`）と prod（`AWS_ROLE_ARN_PROD`）で分けています。
-- **環境分離**: `Stage` パラメータ（`stg` / `prod`）により、DynamoDB の削除保護、Cognito の認証フロー、Step Functions の実行データのログ記録の有無、API Gateway のステージ名、CloudWatch アラームのディメンションなどを **環境ごとに切り替え**ます。
-- **Pydantic バリデーション**: API の入口（リクエスト）と推論の出口（Bedrock レスポンス）の **両方**でスキーマ検証します。Bedrock が非 JSON や範囲外の値を返した場合は `ValidationError` とし、Step Functions の実行は `FAILED` になります。推論結果の **見かけ上の成功による品質劣化**を防ぎます。
-- **Cognito 強化設定**:
-  - `AllowAdminCreateUserOnly: true`（自己登録禁止）
-  - `PreventUserExistenceErrors: ENABLED`（ユーザー列挙攻撃の抑止）
-  - `ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は staging のみ（`IsNotProd`）。**モバイル・デスクトップは SRP**、**Flutter Web（stg）は開発利便のため `USER_PASSWORD_AUTH` 可**。
+変更を安全に本番へ届けるため、ローカル検証、stg デプロイ、E2E ゲート、prod 承認を分離しています。
 
----
-
-## CI/CD パイプライン
-
-```
+```text
 push to main
     │
     ▼
@@ -102,83 +123,73 @@ push to main
     ├─ CloudFormation Outputs から API URL・Cognito 情報を自動取得
     ├─ Cognito 認証 → JWT 取得
     └─ POST /fishing エンドポイントの疎通確認
-    │   ↑ 失敗時はここで停止（本番には触れない）
+    │   失敗時は本番ジョブを実行しない
     ▼
 [Job 4] prod デプロイ（production ロール・手動承認必須）
-    └─ GitHub Environments の Required reviewers による承認ゲート
+    └─ GitHub Environments の Required reviewers
 ```
 
 ---
 
-## 詳細な運用設計（参考）
+## 付録 / 詳細資料
 
-以下は **デプロイ手順・GitHub Secrets 表・CloudFormation パラメータ・外部 API キー・Cognito 手順・API 例・外部データ仕様・監視・アラーム・HTTP 502 切り分け・ローカル検証**を **削減せず** 記載した章です。一次選考で時間がない場合は **読み飛ばして問題ありません**。  
-**※面接時に、IAM・シークレット・障害切り分けの設計意図を説明可能。**
+### 付録A — デプロイ・秘密情報・運用手順
 
-### デプロイ手順
+#### A.1 GitHub Actions OIDC（初回）
 
-#### 事前準備：GitHub Actions OIDC セットアップ（初回のみ）
-
-長期 IAM キーを発行せず、OIDC フェデレーションで一時クレデンシャルを使用します。
+長期 IAM キーは用いず、OIDC フェデレーションで一時クレデンシャルを使用します。
 
 ```bash
-# 1. OIDC プロバイダーをアカウントに登録（1アカウントにつき1回）
+# 1. OIDC プロバイダー（1アカウントに1回）
 aws iam create-open-id-connect-provider \
   --url https://token.actions.githubusercontent.com \
   --client-id-list sts.amazonaws.com \
   --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
 
-# 2. IAM ロールを作成し、trust policy を適用
-#    - trust policy: scripts/github-actions-trust-policy.json
-#    - 追加 inline ポリシー: scripts/deploy-extra-policy.json
+# 2. IAM ロール: trust = scripts/github-actions-trust-policy.json
+#    inline = scripts/deploy-extra-policy.json
 
-# 3. GitHub Secrets（下表と deploy.yml の参照名を 1 文字もずらさないこと）
-#    本ワークフローは AWS Secrets Manager を直接参照しません（パラメータは GitHub Secrets のみ）。
+# 3. GitHub Secrets: 下表と .github/workflows/deploy.yml の参照名を一致させる
+#    本パイプラインは AWS Secrets Manager を直接参照しない
 
-# 4. GitHub Environments を設定
-#    Settings → Environments → staging
-#      Required reviewers: 任意（自動デプロイのままでも可）
-#    Settings → Environments → production
-#      Required reviewers: 承認者を追加（手動承認ゲート）
+# 4. Environments: staging / production
 ```
 
-##### GitHub Secrets 管理表（`.github/workflows/deploy.yml` と完全一致）
+#### GitHub Secrets（`deploy.yml` との対応）
 
-変数名は **リポジトリ Secrets** と **Environment Secrets** のどちらでもよい（同名なら Environment が優先）。**AWS Secrets Manager は本パイプラインでは未使用**です。
+変数名はリポジトリ Secrets または Environment Secrets（同名なら Environment 優先）です。
 
 | Secret 名 | 必須 | 用途 | `deploy.yml` 内の参照 |
 |-----------|:----:|------|------------------------|
-| `AWS_ROLE_ARN_STG` | ✅ | OIDC で引き受けるステージング用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_STG` |
+| `AWS_ROLE_ARN_STG` | ✅ | ステージング用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_STG` |
 | `AWS_ROLE_ARN_PROD` | ✅ | 本番デプロイ用 IAM ロール ARN | `secrets.AWS_ROLE_ARN_PROD` |
-| `ALARM_EMAIL_STG` | 任意 | stg のアラーム通知メール（未設定時はワークフロー内の既定値） | `secrets.ALARM_EMAIL_STG` |
-| `BEDROCK_AGENT_ARN_STG` | 任意 | stg の Bedrock エージェント ARN（未設定時は `template.yaml` の `BedrockAgentArn` 既定と同じ `arn:aws:bedrock:ap-northeast-1:476963918877:agent/*` を `deploy.yml` が渡す） | `secrets.BEDROCK_AGENT_ARN_STG` |
-| `STG_SMOKE_USER_EMAIL` | ✅（E2E ゲート利用時） | stg スモークテスト用 Cognito ユーザー名 | `secrets.STG_SMOKE_USER_EMAIL` |
-| `STG_SMOKE_USER_PASSWORD` | ✅（E2E ゲート利用時） | 上記ユーザーのパスワード | `secrets.STG_SMOKE_USER_PASSWORD` |
-| `ALARM_EMAIL` | 任意 | 本番アラーム通知メール | `secrets.ALARM_EMAIL` |
-| `BEDROCK_AGENT_ARN` | 任意 | 本番 Bedrock エージェント ARN（未設定時は上記と同様に `agent/*` 既定を渡す） | `secrets.BEDROCK_AGENT_ARN` |
+| `ALARM_EMAIL_STG` | 任意 | stg アラートメール | `secrets.ALARM_EMAIL_STG` |
+| `BEDROCK_AGENT_ARN_STG` | 任意 | stg 用 Bedrock エージェント ARN | `secrets.BEDROCK_AGENT_ARN_STG` |
+| `STG_SMOKE_USER_EMAIL` | E2E 利用時 | stg スモーク用 Cognito ユーザー | `secrets.STG_SMOKE_USER_EMAIL` |
+| `STG_SMOKE_USER_PASSWORD` | E2E 利用時 | 上記パスワード | `secrets.STG_SMOKE_USER_PASSWORD` |
+| `ALARM_EMAIL` | 任意 | 本番アラートメール | `secrets.ALARM_EMAIL` |
+| `BEDROCK_AGENT_ARN` | 任意 | 本番 Bedrock エージェント ARN | `secrets.BEDROCK_AGENT_ARN` |
 
-#### ローカルからの手動デプロイ
+#### A.2 手動デプロイ（`sam`）
 
-`sam deploy --parameter-overrides` に渡すキーは **CloudFormation のパラメータ名**であり、GitHub Secrets 名（例: `ALARM_EMAIL`）とは別である（対応関係は下表）。
+`--parameter-overrides` のキーは **CloudFormation パラメータ名**です。
 
 | パラメータ名（`template.yaml`） | 主な用途 |
 |--------------------------------|----------|
-| `DeployTimestamp` | API デプロイの強制更新用（CI は `github.sha` を渡す想定） |
+| `DeployTimestamp` | API 再デプロイ用（CI は `github.sha` を想定） |
 | `Stage` | `stg` または `prod` |
-| `WafRateLimitPer5Min` | WAF レート制限（5 分あたり） |
-| `ApiAccessLogRetentionDays` | API アクセスログの保持日数 |
-| `AlarmEmail` | CloudWatch アラーム通知先（GitHub の `ALARM_EMAIL` / `ALARM_EMAIL_STG` と対応） |
-| `BedrockAgentArn` | InvokeAgent の IAM スコープ（GitHub の `BEDROCK_AGENT_ARN` / `BEDROCK_AGENT_ARN_STG` と対応） |
+| `WafRateLimitPer5Min` | WAF レート制限（5 分） |
+| `ApiAccessLogRetentionDays` | API アクセスログ保持 |
+| `AlarmEmail` | CloudWatch アラート通知先（`ALARM_*` と対応） |
+| `BedrockAgentArn` | InvokeAgent の IAM スコープ（`BEDROCK_AGENT_*` と対応） |
 
 ```powershell
 sam validate --template-file template.yaml --lint
 sam build
 
-# staging
 sam deploy --config-env stg `
   --parameter-overrides AlarmEmail="stg-alert@example.com" Stage="stg"
 
-# production
 sam deploy --config-env default `
   --parameter-overrides `
     AlarmEmail="prod-alert@example.com" `
@@ -186,14 +197,9 @@ sam deploy --config-env default `
     Stage="prod"
 ```
 
----
-
-### 外部 API キー管理（SSM Parameter Store）
-
-API キーは環境変数に直書きせず、SSM Parameter Store（SecureString）で管理します。
+#### A.3 外部 API キー（SSM Parameter Store）
 
 ```bash
-# Stormglass（潮汐データ）
 aws ssm put-parameter \
   --name "/ai-data-analyst/external/stormglass/api-key" \
   --type "SecureString" \
@@ -201,9 +207,7 @@ aws ssm put-parameter \
   --overwrite
 ```
 
----
-
-### 観測所マスタのシード投入
+#### A.4 観測所マスタの投入
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
@@ -212,23 +216,19 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -Region ap-northeast-1
 ```
 
----
+#### A.5 Cognito とクライアントの認証フロー
 
-### Cognito 認証
+デプロイ後、CloudFormation Outputs に `CognitoUserPoolId` と `CognitoUserPoolClientId` が出力されます。
 
-デプロイ完了後、CloudFormation Outputs に `CognitoUserPoolId` と `CognitoUserPoolClientId` が出力されます。
+| フロー | 利用主体 | 本番 | staging | 備考 |
+|--------|---------|:----:|:-------:|------|
+| `USER_SRP_AUTH` | Flutter モバイル・Windows（Amplify Auth） | ✅ | ✅ | 平文パスワードをネットワークに載せない。 |
+| `USER_PASSWORD_AUTH` | Flutter Web × stg | ❌ | ✅ | ブラウザ上の SRP 制約に対するフォールバック。HTTPS。 |
+| `ADMIN_USER_PASSWORD_AUTH` | `scripts/smoke_test.py`（CI） | ❌ | ✅ | 呼び出し元に AWS IAM が必要。 |
 
-> **認証フロー設計（ドキュメント・IaC・実装の三位一体）**
->
-> | フロー | 利用主体 | 本番 | staging | 備考 |
-> |--------|---------|:----:|:-------:|------|
-> | **`USER_SRP_AUTH`（SRP）** | **Flutter モバイル・Windows（Amplify Auth）** | ✅ | ✅ | 平文パスワードをネットワークに載せない。 |
-> | **`USER_PASSWORD_AUTH`** | **Flutter Web × stg**（ブラウザ向けフォールバック） | ❌ | ✅ | ブラウザでは SRP が不安定な場合があるため **ステージングのみ** HTTPS で許可。 |
-> | `ADMIN_USER_PASSWORD_AUTH` | CI の `scripts/smoke_test.py` のみ | ❌ | ✅ | **AWS IAM** が必要。 |
->
-> > **補足**: 本番のユーザープールクライアントには `USER_PASSWORD_AUTH` を含めない。CLI 検証は `admin-initiate-auth` または CI の ADMIN フローを使用する。
+本番のユーザープールクライアントには `USER_PASSWORD_AUTH` を含めません。CLI 検証は `admin-initiate-auth` または CI の ADMIN フローを用います。
 
-#### 1. テストユーザーの作成
+##### テストユーザー作成
 
 ```bash
 aws cognito-idp admin-create-user \
@@ -244,9 +244,9 @@ aws cognito-idp admin-set-user-password \
   --permanent
 ```
 
-#### 2. ID トークンの取得
+##### ID トークン（管理者 CLI）
 
-`ADMIN_USER_PASSWORD_AUTH` は呼び出し元に AWS IAM 認証を要求します（パスワード単体では使用不可）。
+`ADMIN_USER_PASSWORD_AUTH` は IAM 認証を要するため、パスワード単体の公開フローではありません。
 
 ```bash
 aws cognito-idp admin-initiate-auth \
@@ -258,9 +258,7 @@ aws cognito-idp admin-initiate-auth \
 
 レスポンスの `AuthenticationResult.IdToken` を API 呼び出しに使用します。
 
----
-
-### API 呼び出し例
+#### A.6 API 呼び出し例
 
 ```powershell
 $token = "<ID_TOKEN>"
@@ -271,26 +269,24 @@ curl.exe -s -X POST `
   -d '{"lat":35.681236,"lon":139.767125,"target_species":"aji","spot_type":"harbor"}'
 ```
 
-`scripts/test_api.ps1` を使うと、CloudFormation Outputs から URL を自動取得し、Cognito 認証まで含めて一括実行できます。
+`scripts/test_api.ps1` は CloudFormation Outputs の取得と Cognito 認証まで一括で実行します。
 
 ```powershell
 .\scripts\test_api.ps1 -StackName ai-data-analyst-fishing
 ```
 
----
+#### A.7 外部データの取得とキャッシュ
 
-### データ収集仕様
-
-#### 気象予報（気象庁 JMA API）
+##### 気象（気象庁 JMA）
 
 | 項目 | 内容 |
 |-----|-----|
 | エンドポイント | `https://www.jma.go.jp/bosai/forecast/data/forecast/{officeCode}.json` |
 | キャッシュキー | `forecast:jma:<office_code>:<YYYY-MM-DD>` |
 | TTL | +2日 |
-| 備考 | 緯度・経度から最寄りの気象台コードを自動で特定（47 地点分のマッピング）|
+| 備考 | 緯度・経度から最寄りの気象台コードを解決（47地点マッピング） |
 
-#### 潮汐（Stormglass）
+##### 潮汐（Stormglass）
 
 | 項目 | 内容 |
 |-----|-----|
@@ -298,84 +294,69 @@ curl.exe -s -X POST `
 | キャッシュキー | `tide:stormglass:<lat>:<lon>:<YYYY-MM-DD>` |
 | TTL | +2日 |
 
-#### 海況（Open-Meteo Marine）
+##### 海況（Open-Meteo Marine）
 
 | 項目 | 内容 |
 |-----|-----|
 | エンドポイント | `https://marine-api.open-meteo.com/v1/marine` |
 | 取得変数 | 海面水温・波高・波向・周期 |
 | キャッシュキー | `marine:openmeteo:<lat>:<lon>:<YYYY-MM-DDTHH>` |
-| TTL | +3時間（気象変化を反映するため短め）|
+| TTL | +3時間 |
 
-#### 部分障害時の挙動
+並列取得のいずれかが失敗しても、Catch により推論は継続し、利用可能な系列のみを渡します。欠損は結果の `evidence` 側に反映されます。
 
-Step Functions の並列ステートに `Catch` があるため、潮汐・海況・気象の **いずれかの取得に失敗しても推論ステップは続行**します。取得できたデータだけを使って推論し、欠けた情報は結果の `evidence` に反映されます。
+#### A.8 監視とログ
 
----
+初回デプロイ後、SNS メール登録の確認が必要です。
 
-### 監視・運用
-
-#### アラート通知
-
-`template.yaml` の SNS サブスクリプション（メール）が自動作成されます。  
-**初回デプロイ後、登録したメールアドレスに届く確認メールの承認が必要です。**
-
-| アラーム名 | 条件 | 目的 |
+| アラーム | 条件 | 目的 |
 |-----------|------|------|
-| `FishingApi5xxAlarm` | 1 分ごとの評価を 5 回行い、そのうち 3 回以上で 5xx ≥1 | API Gateway 層の障害検知 |
-| `FishingApiProxyErrorsAlarm` | 同上の評価パターンで Lambda エラー ≥1 | API プロキシ Lambda の異常検知 |
-| `InferenceScoreAbsoluteAlarm` | 1 時間平均スコアが 50 未満の状態が 2 時間連続 | 推論品質の急激な低下を検知 |
-| `InferenceScoreDriftRatioAlarm` | 1 時間平均が 45 未満の回数が、24 時間のうち 16 回以上 | 推論品質の緩やかな劣化を検知 |
+| `FishingApi5xxAlarm` | 1分評価を5回、そのうち3回以上で 5xx ≥ 1 | API Gateway 層の障害 |
+| `FishingApiProxyErrorsAlarm` | 同上で Lambda エラー ≥ 1 | API プロキシ Lambda の異常 |
+| `InferenceScoreAbsoluteAlarm` | 1時間平均スコア < 50 が2時間継続 | 急激な品質低下 |
+| `InferenceScoreDriftRatioAlarm` | 1時間平均 < 45 が24時間で16回以上 | 緩慢な品質劣化 |
 
-#### ログ出力先
+| ログ種別 | パス例 |
+|---------|--------|
+| API Gateway | `/aws/apigateway/<stack>/<stage>/access` |
+| Step Functions | `/aws/stepfunctions/<stack>/FishingAdviceStateMachine` |
+| Lambda | `/aws/lambda/<function-name>` |
 
-| ログ種別 | 出力先（CloudWatch Logs） |
-|---------|------------------------|
-| API Gateway アクセスログ | `/aws/apigateway/<stack>/<stage>/access` |
-| Step Functions 実行ログ | `/aws/stepfunctions/<stack>/FishingAdviceStateMachine` |
-| Lambda 関数ログ | `/aws/lambda/<function-name>` |
+**本番**（`Stage=prod`）では、Step Functions の実行データ（入出力）を CloudWatch Logs に残しません。外部 API のレスポンス内容や位置情報をログに流さないためです。**staging** では障害調査用に残します。
 
-#### HTTP 502（Bad Gateway）が出るとき
+##### HTTP 502 / 504
 
-API プロキシ Lambda は Step Functions の **同期実行**（`StartSyncExecution`）が `SUCCEEDED` 以外のとき **502**（タイムアウト時は **504**）を返します。レスポンス JSON には `error` に状態名、`cause` に **失敗理由（スタックトレースや Lambda エラー本文）** が入る。Flutter アプリのエラー表示にも `cause` と `trace_id` を含める。
+API プロキシ Lambda は Step Functions の同期実行（`StartSyncExecution`）が `SUCCEEDED` 以外のとき **502**、タイムアウト時は **504** を返します。レスポンス JSON には `error` に状態名、`cause` に失敗理由が含まれます。
 
-**よくある原因の切り分け**
-
-| 想定 | 確認先 |
+| 仮説 | 確認先 |
 |------|--------|
-| 最寄り気象台解決に失敗（DynamoDB 空・権限） | `*-resolve_nearest_station` のログ、`STATIONS_TABLE` |
-| Bedrock `InvokeAgent` 失敗・SSM のエージェント ID 不一致 | `*-fishing_infer` のログ、`/ai-data-analyst/bedrock/agent/*` |
+| 最寄り気象台解決に失敗 | `*-resolve_nearest_station` のログ、`STATIONS_TABLE` |
+| `InvokeAgent` 失敗・SSM の ID 不一致 | `*-fishing_infer` のログ、`/ai-data-analyst/bedrock/agent/*` |
 | エージェントが JSON 以外を返す・スキーマ不一致 | 同上ログ（`ValueError` / `ValidationError`） |
-| 実行が長すぎて API 側がタイムアウト | 504 に近い挙動。外部 API 遅延・推論レイテンシを確認 |
+| 実行時間超過 | 外部 API 遅延・推論レイテンシ |
 
-**`cause` に `accessDeniedException` / `Access denied when calling Bedrock` が含まれるとき**
+**`cause` に `accessDeniedException` / `Access denied when calling Bedrock` が含まれる場合**
 
-Lambda からの `InvokeAgent` が IAM またはアカウント側設定で拒否されています。次を順に確認する。
+`InvokeAgent` が IAM またはアカウント設定で拒否されています。以下を順に確認します。
 
 | 確認 | 内容 |
 |------|------|
-| 推論 Lambda の IAM | ロールに `bedrock:InvokeAgent` が **`agent`・`agent-alias` の ARN**（SSM の ID と一致）に付いているか。テンプレート更新後は **再デプロイ**が必要。無効なアクション名（例: `bedrock-agent-runtime:InvokeAgent`）は削除する。 |
-| Lambda ロールの権限境界・SCP | ロールに **Permissions boundary** が付いていないか、Organizations の **SCP** で `bedrock:*` が拒否されていないか（表面上ポリシーに Allow でも Deny で潰れる）。 |
-| 基盤モデル（アカウント） | **Model access** ページは廃止済みのため、**モデルカタログ／Playground** で対象モデルが使えるか、または **Anthropic 初回のユースケース提出**が済んでいるかを確認。 |
-| **エージェントの Execution role（重要）** | **Lambda の IAM が正しくても**、エージェント内部で基盤モデルを呼ぶ **サービスロール**に `bedrock:InvokeModel` 等が無いと、ストリーム経由で同様の AccessDenied が返ることがある。Bedrock コンソールのエージェント詳細に表示される **Execution role** を開き、モデル・ナレッジベース用の権限を確認。 |
-| コンソールとの比較 | 同じエージェント・同じエイリアスで **Bedrock の Test** が成功するか。コンソールのみ成功する場合は **呼び出し元ロール**の差、どちらも失敗する場合は **エージェント／モデル側**を優先。 |
-| エージェントの再準備 | 設定変更後、コンソールでエージェントを **Save → Prepare**し、**エイリアス**を最新の準備済みバージョンに紐づけ直す。 |
+| 推論 Lambda の IAM | `bedrock:InvokeAgent` が `agent`・`agent-alias` の ARN（SSM の ID と一致）に付与されているか。テンプレート更新後は再デプロイが必要。`bedrock-agent-runtime:InvokeAgent` 等の誤アクション名は除く。 |
+| ロールの境界・SCP | Permissions boundary や Organization の SCP で `bedrock:*` が拒否されていないか。 |
+| 基盤モデル | モデルカタログ／Playgroundで利用可否、Anthropic 初回ユースケース提出の有無を確認。 |
+| エージェントの Execution role | Lambda の IAM が正しくても、エージェント内部のサービスロールに `bedrock:InvokeModel` 等が無いと同様の AccessDenied が返る。 |
+| コンソールとの比較 | 同一エイリアスで Bedrock の Test が通るか。片方のみ成功する場合は呼び出し元ロール、両方失敗する場合はエージェント／モデル側を先に確認。 |
+| エージェントの再準備 | 設定変更後、エージェントを `Save -> Prepare` し、エイリアスを最新の準備済みバージョンに更新する。 |
 
-推論 Lambda のログに **`InvokeAgent 予定: agent_id=... agent_alias_id=... AWS_REGION=...`** が出る（調査用）。SSM と Bedrock コンソールの ID と一致するか確認する。
+推論 Lambda のログに出力される **`InvokeAgent 予定: agent_id=... agent_alias_id=... AWS_REGION=...`** を、SSM と Bedrock コンソールの ID と照合します。
 
-> 本番（`Stage=prod`）では、Step Functions の実行データ（入出力）を **CloudWatch Logs に残しません**。  
-> 外部 API のレスポンスに含まれるキーや、位置情報などがログに流れないようにするためです。  
-> staging では実行データをログに残し、障害調査しやすくしています。
-
----
-
-### ローカル動作確認
+### 付録B — ローカル開発
 
 ```bash
-# Bedrock なしでレスポンス形式のみ確認する場合
+# Bedrock なしでレスポンス形式のみ確認
 INFERENCE_PROVIDER=mock python lambdas/fishing/infer/lambda_function.py
 
-# 単体テスト（カバレッジレポート付き）
+# 単体テスト
 pytest tests/ --cov=lambdas --cov=layers --cov-report=term-missing
 
 # 型検査
@@ -383,113 +364,68 @@ mypy layers/fishing_common/fishing_common/ lambdas/ \
   --ignore-missing-imports --explicit-package-bases
 ```
 
-#### Virtual CTO 機械ゲート（コミット毎）
-
-`pip install -r requirements-dev.txt` のあと **pre-commit を有効化**すると、`git commit` 時に `scripts/virtual_cto_gate.py --fast` が **pytest + mypy** を実行し、失敗時はコミットが拒否されます（緊急時のみ `git commit --no-verify`）。
+`pip install -r requirements-dev.txt` の後に `pre-commit install` を実行すると、コミット時に `scripts/virtual_cto_gate.py --fast`（pytest + mypy）が実行されます。
 
 ```bash
 pre-commit install
-# 手動で全ファイルに対して実行する場合
 pre-commit run --all-files
 ```
 
-**GitHub 上の見える化**: `main` へ push した CI ジョブの **Summary** に、手動レビュー用チェックリスト（IAM・Secrets・型・日本語）が Markdown で追記されます。PR 作成時は `.github/pull_request_template.md` のチェックボックスも利用してください。
+`main` への push 時、CI Job Summary にレビュー用チェックリストが Markdown で付与されます。PR 作成時は `.github/pull_request_template.md` を利用します。
 
----
+### 付録C — 外部レビューに基づく是正記録
 
-## 設計の経緯・レビュー記録（参考）
+#### 最終ゲート（3点）
 
-外部レビュー（CTO 視点）とその是正、フロントエンド追補の記録を **開示**する章です。一次選考では不要なら **スキップ可**。**※面接時に、指摘とトレードオフを説明可能。**
+1. **IAM**  
+   `scripts/deploy-extra-policy.json` は `Resource: "*"` を用いません。WAF と API Gateway ステージの関連付けは `restapis/2ie0f0ucei/stages/*`（stg）と `restapis/kgiv7wxd8l/stages/*`（prod）に限定しています。`BedrockAgentArn` の単独 `*` は廃止し、Step Functions ログ配信は `SfnLogGroup` に限定しています。`cloudwatch:PutMetricData` は AWS 仕様上 `Resource: "*"` と `cloudwatch:namespace` 条件を組み合わせています。  
+2. **Secrets とドキュメント**  
+   GitHub Secrets 名と `.github/workflows/deploy.yml` の `secrets.*` を一致させ、`BEDROCK_AGENT_*` 未設定時の `BedrockAgentArn` は `template.yaml` の既定値と揃えています。  
+3. **Cognito とクライアント**  
+   IaC では `ALLOW_USER_SRP_AUTH` を常時有効化し、`ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は stg のみ有効です。Flutter は Web×stg URL のみ `USER_PASSWORD_AUTH`、その他は Amplify SRP、CI は `ADMIN_USER_PASSWORD_AUTH` を用います。
 
-### 最終是正完了報告（CTO への回答）
+#### 指摘分類表
 
-最終ゲートで指摘された **3 点**について、コードとドキュメントで次のとおり完了した。
+##### Fatal
 
-1. **IAM の厳格化**  
-   `scripts/deploy-extra-policy.json` は **`Resource: "*"` を使用しない**。WAF と API Gateway ステージの関連付けは **`restapis/2ie0f0ucei/stages/*`（stg）と `restapis/kgiv7wxd8l/stages/*`（prod）** に限定（スタック再作成で RestApi ID が変わった場合は本ポリシーを更新）。不要だった Bedrock 読み取り Statement は **デプロイ経路で未使用のため削除**。  
-   `template.yaml` の `BedrockAgentArn` パラメータ既定は **単独の `"*"` を廃止**し、当アカウントの `agent/*` パターンに変更。  
-   併せて Step Functions 実行ロールのログ配信は **`SfnLogGroup` の ARN と `${LogGroupArn}:*`** に限定済み。  
-   `FishingInferenceLambda` の `cloudwatch:PutMetricData` は **AWS 仕様上 `Resource: "*"` + `cloudwatch:namespace` 条件**のまま（カスタムメトリクスにリソース ARN を指定できない）。
+| 内容 | 是正 |
+|------|------|
+| `deploy-extra-policy.json` の広い Resource | スコープ限定。WAF 関連の RestApi ID 固定。不要 Bedrock 読み取り Statement 削除。Step Functions ログは `SfnLogGroup` に限定。 |
+| `ci` ジョブの不要 assume | `sam validate` / `sam build` から `configure-aws-credentials` を除去。 |
 
-2. **README と CI/CD の Secrets 完全同期**  
-   **「GitHub Secrets 管理表」** の Secret 名と `.github/workflows/deploy.yml` の `secrets.*` およびファイル先頭コメントの列挙を **同一**に保つ。`BEDROCK_AGENT_*` 未設定時に渡す `BedrockAgentArn` のプレースホルダは **`template.yaml` の既定値と一致**させた。
+##### Major
 
-3. **モバイル SRP 認証の整合**  
-   **IaC**: `CognitoUserPoolClient` は常に `ALLOW_USER_SRP_AUTH`。`ALLOW_USER_PASSWORD_AUTH` / `ALLOW_ADMIN_USER_PASSWORD_AUTH` は **`IsNotProd`（stg）のみ**有効（本番は SRP のみ）。  
-   **Flutter**: `AppConfig.usePasswordAuthOnWeb` は `kIsWeb && fishingApiUrl.contains('/stg/')` のため **モバイル／デスクトップは常に Amplify の SRP**。**Flutter Web かつ stg API URL** のときのみ `USER_PASSWORD_AUTH`（HTTPS）。  
-   **CI**: `scripts/smoke_test.py` は **`ADMIN_USER_PASSWORD_AUTH`** でトークン取得（別経路）。
+| 内容 | 是正 |
+|------|------|
+| README と `deploy.yml` の Secret 名不一致 | Secrets 表を実装と同期。 |
+| `smoke_test.py` と README の SRP 記述の矛盾 | 実装に合わせて認証フローを修正。 |
 
----
+##### Medium
 
-### CTO レビュー指摘事項と是正記録
+| 内容 | 是正 |
+|------|------|
+| API Gateway の `StageName` 固定 | `!Ref Stage` に修正。 |
+| 未使用 `requests` | 削除。HTTP は `urllib` / `http.client` を使用。 |
+| `test_api.ps1` の認証欠落 | `Authorization: IdToken` を付与。 |
 
-本プロジェクトは外部 CTO 視点による厳格なコードレビューを受け、以下の指摘を是正した記録を誠実に開示します。
+##### Flutter 追補
 
-#### 致命的 (Fatal)
+| 内容 | 是正 |
+|------|------|
+| Pydantic と Flutter モデル不一致 | スキーマ 1:1 対応、`widget_test` 追加。 |
+| 変数名衝突（`_species` 等） | リネーム、API フィールド名整合。 |
+| 空レスポンスの扱い | 異常系表示を追加。 |
+| モバイルの `USER_PASSWORD_AUTH` | Amplify SRP へ切り替え。 |
+| `withOpacity` 非推奨 | `withValues(alpha: ...)` に置換。 |
 
-| # | 指摘内容 | 是正内容 | 対象ファイル |
-|---|---------|---------|-------------|
-| 1 | `deploy-extra-policy.json` に広いリソース指定が残存 | `Resource: "*"` は使用しない。WAF–API Gateway の関連付けは stg/prod の RestApi ID で固定。Bedrock 読み取りはデプロイ不要のため削除。Step Functions ロールのログ権限は `SfnLogGroup` に限定 | `scripts/deploy-extra-policy.json`, `template.yaml` |
-| 2 | `deploy.yml` の `sam validate/build` ステップで不要な本番ロールの assume が実行されていた | `ci` ジョブから `configure-aws-credentials` を削除。SAM の構文検証・ビルドに AWS 認証は不要であることを明確化 | `.github/workflows/deploy.yml` |
+### 付録D — LLM 支援下での開発補足
 
-#### 重大 (Major)
+仕様の言語化、IaC の下書き、テスト補助に **Cursor / LLM** を用いています。最終判断は人間が行い、変更は **テスト・IaC・監視**で検証可能なものに限定しています。
 
-| # | 指摘内容 | 是正内容 | 対象ファイル |
-|---|---------|---------|-------------|
-| 1 | README の OIDC 設定値と `deploy.yml` のシークレット名が不一致（`ALARM_EMAIL_STG` 等が未記載） | README の「GitHub Secrets 登録」セクションにすべての使用シークレットを網羅的に記載 | `README.md` |
-| 2 | `smoke_test.py` が `ADMIN_USER_PASSWORD_AUTH` を使用。README の「SRP 専用」という記述と矛盾 | README の認証フロー説明を実装に合わせて正確に修正（上の認証フロー設計表を参照）。`smoke_test.py` は staging CI 専用であり `ADMIN_USER_PASSWORD_AUTH` を使う設計は正しいことを明示化 | `README.md`, `scripts/smoke_test.py` |
+| 観点 | 例 |
+|------|-----|
+| セキュリティ | デプロイロールの ARN スコープ、OIDC、Cognito・WAF、環境分離 |
+| 堅牢性 | Step Functions の Catch、HTTP リトライ、CloudWatch アラーム |
+| データ品質 | Pydantic による入出力の固定 |
 
-#### 中程度 (Medium)
-
-| # | 指摘内容 | 是正内容 | 対象ファイル |
-|---|---------|---------|-------------|
-| 1 | API Gateway の `StageName` がハードコードされており、環境変数で動的制御できていなかった | `StageName: !Ref Stage` に修正済み | `template.yaml` |
-| 2 | `requirements-runtime.txt` に未使用の `requests` が残存 | `requests` を削除。Lambda の HTTP 通信は `urllib` / `http.client` を使用していることを確認済み | `requirements-runtime.txt` |
-| 3 | `test_api.ps1` が認証ヘッダーを含まない不完全なスクリプトだった | `Authorization: $idToken` ヘッダーを含む正しいスクリプトに修正済み | `scripts/test_api.ps1` |
-
-#### Flutter フロントエンド追加後の指摘
-
-| # | 指摘内容 | 是正内容 | 対象ファイル |
-|---|---------|---------|-------------|
-| 1 | バックエンド Pydantic スキーマ（`summary`, `score.value`）と Flutter モデル（`advice`, `score` int）が不一致。API レスポンスが正しく描画されない | `FishingResult` / `FishingScore` / `FishingSeason` を Pydantic スキーマと 1 対 1 で対応するよう全面刷新。`widget_test.dart` にスキーマ整合テストを追加して型の一貫性を自動検証 | `frontend/lib/services/fishing_api_service.dart`, `frontend/test/widget_test.dart` |
-| 2 | `home_screen.dart` で `_species`（String）がトップレベル `const _species`（List）を隠す命名バグ。ドロップダウンが正常動作しない | インスタンス変数を `_selectedSpecies` / `_selectedSpot` にリネームして衝突を解消。`r.advice` → `r.summary`、`r.score`（int）→ `r.score.value` に修正 | `frontend/lib/screens/home_screen.dart` |
-| 3 | Bedrock 推論結果が空・非正規の場合のエラーハンドリングが未実装 | `score.value == 0 && summary.isEmpty` を異常系として検出し、ユーザーフレンドリーなフォールバック表示を実装 | `frontend/lib/screens/home_screen.dart` |
-| 4 | モバイルが `USER_PASSWORD_AUTH` で Cognito と不一致 | **Amplify Auth + SRP** に切替。`AuthException` を日本語メッセージにマッピング | `frontend/lib/services/cognito_service.dart`, `frontend/lib/main.dart`, `frontend/lib/config/amplify_configuration.dart` |
-| 5 | `withOpacity`（deprecated）が `home_screen.dart` / `login_screen.dart` に残存 | `withValues(alpha: ...)` に置き換え | `frontend/lib/screens/home_screen.dart` |
-
----
-
-## AI と協働する開発プロセス（AI-Augmented Development）
-
-（任意）設計・レビュー・ドキュメント整備の進め方の補足。一次選考では **読まなくてよい**。
-
-本プロジェクトでは、**Cursor** 上の **Claude（Sonnet 系）** を、単なるコード生成ツールではなく、要件整理・設計・レビューまで担う **バーチャルなリードエンジニア／CTO** として位置づけ、人間の開発者と **ペアプログラミング** しながら進めました。**開発の速さと、本番運用に耐える品質**の両立を目指しています。
-
-### AI ネイティブ・デベロップメント
-
-- 仕様の言語化、IaC（AWS SAM）の叩き台、Lambda／テスト／CI の生成を AI と何度もやり取りし、**実装とドキュメントを短いサイクルで揃え**ました。
-- 人間がアーキテクチャの意図・運用上の制約・セキュリティ境界を示し、AI がその前提でコードや差分を出す、という **役割分担** をはっきりさせています。
-
-### 厳格なレビューサイクル（多視点の「激辛レビュー」）
-
-- レビュアとして **複数の AI ペルソナ**（例：MLOps／インフラ寄りのリード、プロダクト全体を見る CTO 視点など）を切り替え、同一設計に対して **少なくとも 3 ラウンド**、意図的に厳しい観点から指摘を出しました。
-- 各ラウンドの指摘（権限の広さ、ログに残る情報、障害時の挙動、テストの抜けなど）を **修正 → 再レビュー** し、採用した理由は README やコードコメントに **追記できるところまで**整理しました。
-
-### プロフェッショナル品質への到達（シニア水準を基準に）
-
-AI の提案をそのまま採用するのではなく、**あらかじめ品質の基準を決めたうえで**詰めました。README の **アーキテクチャ〜セキュリティ・CI/CD** にまとめているとおり、たとえば次の軸で **シニアエンジニアが求める水準**を意識しています。
-
-| 観点 | このリポジトリでの具体例 |
-|------|-------------------------|
-| **セキュリティ** | デプロイロール IAM の ARN スコープ、推論 Lambda の `PutMetricData` のみ AWS 仕様上の `*`＋条件、GitHub Actions **OIDC**、Cognito SRP（Amplify）／WAF／環境分離 |
-| **堅牢性** | Step Functions 上の **Catch とフォールバック**（部分障害でも推論継続）、外部 HTTP の **リトライ戦略**、CloudWatch **アラーム** による劣化検知 |
-| **データ品質** | **Pydantic** による API 入出力の検証。非 JSON やスキーマから外れた値を **黙って通さない** 設計 |
-
-（現時点の負荷では上記の境界で先に固めており、キューを挟む処理が増えた段階で **デッドレターキュー（DLQ）の導入**などを検討する余地はあります。）
-
-### 意図的な意思決定（人間が最後に選ぶ）
-
-- AI は選択肢とトレードオフの列挙に強い一方、**本番で許容するリスクやコスト**は人間が決めます。DynamoDB のキー設計、キャッシュの TTL、「外部取得が失敗したときにどこまで推論を続けるか」などは、**その判断の根拠**を対話の中で言語化し、README や `template.yaml` のコメントに残しました。
-- **AI の出力を鵜呑みにしない**ことを原則とし、根拠の薄い一般論は採用せず、テスト・IaC・監視で検証できる形に落ちた変更だけをマージ対象としました。
-
-> **まとめ**: 生成 AI はコードを早く書くための道具であると同時に、**設計レビューやドキュメント整備を並行して回す相棒**になり得ます。少人数でも、エンタープライズに近い完成度を目指すときに有効です。次世代のエンジニアには、**プロンプトとコンテキストを設計し、AI の提案を責任をもって採否できる人**が、再現性の高い成果を出せると考えています。
+将来的にキュー越しの処理が増えた段階では、DLQ 等の導入を検討します。
